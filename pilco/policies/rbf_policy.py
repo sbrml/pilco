@@ -54,31 +54,97 @@ class RBFPolicy(Policy):
         cov = tf.convert_to_tensor(cov, dtype=tf.float32)
         cov = tf.reshape(cov, (self.state_dim, self.state_dim))
 
-        # COMMON
-        rbf_scales_inv = 1. / self.rbf_scales
+        # Compute mean
+        mean_det_coeff = tf.eye(self.state_dim)
+        mean_det_coeff = mean_det_coeff + cov * self.rbf_scales ** -1
+        mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
 
-        # Selecting rbf_scales[0] makes it 1d for diag to work properly
-        cov_plus_scales_2 = cov + tf.linalg.diag(self.rbf_scales[0] ** 2)
-        cov_plus_scales_2_inv = tf.linalg.inv(cov_plus_scales_2)
+        scales_plus_cov = self.rbf_scales_mat + cov
+        scales_plus_cov_inv = tf.linalg.inv(scales_plus_cov)
 
-        # MEAN
-        A = state_cov * rbf_scales_inv ** 2 + tf.eye(self.state_dim)
-        A_det = tf.linalg.det(A)
+        # num_rbf_features x state_dim
+        diff_mui_mus = self.rbf_locs - loc
+
+        mean_u_quad = tf.einsum('ij, jk, ik -> i',
+                                diff_mui_mus,
+                                scales_plus_cov_inv,
+                                diff_mui_mus)
         
-        diff = tf.transpose(loc - self.rbf_locs)
-        quad_form = diff * tf.matmul(cov_plus_scales_2_inv, diff)
-        quad_form = tf.reduce_sum(quad_form, axis=-1)
-        exp_quads = tf.math.exp(-0.5 * quad_form)
+        exp_mean_u_quad = tf.math.exp(-0.5 * mean_u_quad)
+        rbf_comp_mean = mean_det_coeff * exp_mean_u_quad
 
-        rbf_components = A_det ** -0.5 * exp_quads
-        mean = tf.matmul(self.rbf_weights, rbf_components)
+        mean_u = tf.squeeze(tf.matmul(self.rbf_weights, rbf_comp_mean))
 
-        return mean
+        # Compute cov_su
+        Q = tf.einsum('ij, jk, kl -> il',
+                      self.rbf_locs,
+                      scales_plus_cov_inv,
+                      cov)
+
+        Q = Q + tf.einsum('ij, jk, kl -> il',
+                          loc,
+                          scales_plus_cov_inv,
+                          self.rbf_scales_mat) 
+        
+        Q = Q * rbf_comp_mean[..., None]
+
+        cov_su = tf.matmul(self.rbf_weights, Q) - mean_u * tf.squeeze(loc)
+
+        # Compute cov_uu
+        cov_det_coeff = tf.eye(self.state_dim)
+        cov_det_coeff = cov_det_coeff + 2. * cov * self.rbf_scales ** -1
+        cov_det_coeff = tf.linalg.det(cov_det_coeff) ** -0.5
+
+        half_scales_plus_cov = self.rbf_scales_mat / 2 + cov
+        half_scales_plus_cov_inv = tf.linalg.inv(half_scales_plus_cov)
+
+        muij = (self.rbf_locs[:, None, :] + self.rbf_locs[None, :, :]) / 2
+        diff_muij_mus = muij - loc[None, ...]
+        diff_mui_muj = (self.rbf_locs[:, None, :] - self.rbf_locs[None, :, :])
+
+        cov_uu_quad = tf.einsum('ijk, kl, ijl -> ij',
+                                diff_muij_mus,
+                                half_scales_plus_cov_inv,
+                                diff_muij_mus)
+
+        cov_uu_quad = cov_uu_quad + 0.5 * tf.einsum('ijk, kl, ijl -> ij',
+                                                    diff_mui_muj,
+                                                    self.rbf_scales_mat,
+                                                    diff_mu_muj)
+
+        exp_cov_uu_quad = tf.math.exp(-0.5 * cov_uu_quad)
+
+        S = cov_det_coeff * exp_cov_uu_quad
+
+        cov_uu = tf.einsum('i, ij, j ->',
+                           self.rbf_weights,
+                           S,
+                           self.rbf_weights)
+
+        cov_uu = cov_uu - mean_u ** 2
+
+        return mean_u, cov_su, cov_uu
 
 
     @property
     def rbf_scales(self):
-        return tf.math.exp(self.rbf_log_scales)
+        """
+        Returns 1 x state_dim tensor of RBF squared lengthscales.
+        """
+
+        return tf.math.exp(self.rbf_log_scales) ** 2
+
+
+    @property
+    def rbf_scales_mat(self):
+        """
+        Returns diagonal state_dim x state_dim tensor
+        of RBF squared lengthscales.
+        """
+
+        rbf_scales = self.rbf_scales
+
+        return tf.diag(rbf_scales)
 
 
     def call(self, state):
