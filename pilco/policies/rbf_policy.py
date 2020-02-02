@@ -5,7 +5,6 @@ import tensorflow_probability as tfp
 
 tfd = tfp.distributions
 
-
 class RBFPolicy(Policy):
 
     def __init__(self,
@@ -43,7 +42,6 @@ class RBFPolicy(Policy):
 
 
     def reset(self):
-
         # Sample policy parameters from standard normal
         for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
 
@@ -51,7 +49,7 @@ class RBFPolicy(Policy):
 
 
     def match_moments(self, loc, cov):
-          
+
         # Convert state mean to tensor and reshape to be rank 2
         loc = tf.convert_to_tensor(loc, dtype=self.dtype)
         loc = tf.reshape(loc, (1, self.state_dim))
@@ -63,7 +61,7 @@ class RBFPolicy(Policy):
         # Compute mean_u
         mean_det_coeff = tf.eye(self.state_dim)
         mean_det_coeff = mean_det_coeff + tf.matmul(cov,
-                                        tf.linalg.diag(self.rbf_scales ** -1))
+                                        tf.linalg.diag(1. / self.rbf_scales))
         mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
 
         scales_plus_cov = self.rbf_scales_mat + cov
@@ -75,7 +73,7 @@ class RBFPolicy(Policy):
                                 diff_mui_mus,
                                 scales_plus_cov_inv,
                                 diff_mui_mus)
-        
+
         exp_mean_u_quad = tf.math.exp(-0.5 * mean_u_quad)
         rbf_comp_mean = mean_det_coeff * exp_mean_u_quad
 
@@ -84,41 +82,44 @@ class RBFPolicy(Policy):
                            rbf_comp_mean)
 
         # Compute cov_su
-        Q = tf.einsum('ij, jk, kl -> il',
-                      self.rbf_locs,
+        Q = tf.einsum('ij, jk, lk -> li',
+                      cov,
                       scales_plus_cov_inv,
-                      cov)
+                      self.rbf_locs)
 
-        Q = Q + tf.einsum('ij, jk, kl -> il',
-                          loc,
+        Q = Q + tf.einsum('ij, jk, lk -> li',
+                          self.rbf_scales_mat,
                           scales_plus_cov_inv,
-                          self.rbf_scales_mat) 
-        
-        Q = Q * rbf_comp_mean[..., None]
+                          loc)
+
+        Q = Q * rbf_comp_mean[:, None]
 
         cov_su = tf.einsum('i, ij -> j', self.rbf_weights, Q)
+
         cov_su = cov_su - mean_u * tf.squeeze(loc)
 
         # Compute cov_uu
         cov_det_coeff = tf.eye(self.state_dim)
-        cov_det_coeff = cov_det_coeff + 2. * cov * self.rbf_scales ** -1
+        cov_det_coeff = cov_det_coeff + 2. * cov / self.rbf_scales
         cov_det_coeff = tf.linalg.det(cov_det_coeff) ** -0.5
 
-        half_scales_plus_cov = self.rbf_scales_mat / 2 + cov
+        half_scales_plus_cov = 0.5 * self.rbf_scales_mat + cov
         half_scales_plus_cov_inv = tf.linalg.inv(half_scales_plus_cov)
 
-        muij = (self.rbf_locs[:, None, :] + self.rbf_locs[None, :, :]) / 2
-        diff_muij_mus = muij - loc[None, ...]
-        diff_mui_muj = (self.rbf_locs[:, None, :] - self.rbf_locs[None, :, :])
+        muij = (self.rbf_locs[None, :, :] + self.rbf_locs[:, None, :]) / 2
+
+        diff_muij_mus = muij - loc[None, :, :]
+
+        diff_mui_muj = self.rbf_locs[None, :, :] - self.rbf_locs[:, None, :]
 
         cov_uu_quad = tf.einsum('ijk, kl, ijl -> ij',
                                 diff_muij_mus,
                                 half_scales_plus_cov_inv,
                                 diff_muij_mus)
 
-        cov_uu_quad = cov_uu_quad + 0.5 * tf.einsum('ijk, kl, ijl -> ij',
+        cov_uu_quad = cov_uu_quad + 0.5 * tf.einsum('ijk, k, ijk -> ij',
                                                     diff_mui_muj,
-                                                    self.rbf_scales_mat,
+                                                    1. / self.rbf_scales[0],
                                                     diff_mui_muj)
 
         exp_cov_uu_quad = tf.math.exp(-0.5 * cov_uu_quad)
@@ -157,7 +158,7 @@ class RBFPolicy(Policy):
 
 
     def call(self, state):
-        
+
         # Convert state to tensor and reshape to be rank 2
         state = tf.convert_to_tensor(state, dtype=self.dtype)
         state = tf.reshape(state, (1, -1))
