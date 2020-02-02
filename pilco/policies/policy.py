@@ -10,7 +10,7 @@ class Policy(tf.Module):
                  name='policy',
                  **kwargs):
 
-        super(Policy, self).__init__(self, name=name, **kwargs)
+        super().__init__(name=name, **kwargs)
 
         self.state_dim = state_dim
         self.action_dim = action_dim

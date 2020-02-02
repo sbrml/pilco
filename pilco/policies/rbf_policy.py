@@ -12,27 +12,33 @@ class RBFPolicy(Policy):
                  state_dim,
                  action_dim,
                  num_rbf_features,
+                 dtype,
                  name='rbf_policy',
                  **kwargs):
 
-        super(RBFPolicy, self).__init__(state_dim=state_dim,
-                                        action_dim=action_dim,
-                                        name=name,
-                                        **kwargs)
+        super().__init__(state_dim=state_dim,
+                         action_dim=action_dim,
+                         name=name,
+                         **kwargs)
+
+        # Set dtype
+        self.dtype = dtype
 
         # Number of radial basis functions
         self.num_rbf_features = num_rbf_features
 
         # Set RBF policy locations
-        self.rbf_locs = tf.Variable(tf.zeros(num_rbf_features, state_dim),
-                                    name='rbf_locs')
+        rbf_locs_init = tf.zeros((num_rbf_features, state_dim), dtype=dtype)
+        self.rbf_locs = tf.Variable(rbf_locs_init, name='rbf_locs')
 
         # Set RBF policy lengthscales
-        self.rbf_log_scales = tf.Variable(tf.zeros(1, state_dim),
+        rbf_log_scales_init = tf.zeros((1, state_dim), dtype=dtype)
+        self.rbf_log_scales = tf.Variable(rbf_log_scales_init,
                                           name='rbf_log_scales')
 
         # Set RBF policy weights
-        self.rbf_weights = tf.Variable(tf.zeros(num_rbf_features),
+        rbf_weights_init = tf.zeros((num_rbf_features,), dtype=dtype)
+        self.rbf_weights = tf.Variable(rbf_weights_init,
                                        name='rbf_weights')
 
 
@@ -47,14 +53,14 @@ class RBFPolicy(Policy):
     def match_moments(self, loc, cov):
           
         # Convert state mean to tensor and reshape to be rank 2
-        loc = tf.convert_to_tensor(loc, dtype=tf.float32)
+        loc = tf.convert_to_tensor(loc, dtype=self.dtype)
         loc = tf.reshape(loc, (1, self.state_dim))
 
         # Convert state covariance to tensor and ensure it's a square matrix
-        cov = tf.convert_to_tensor(cov, dtype=tf.float32)
+        cov = tf.convert_to_tensor(cov, dtype=self.dtype)
         cov = tf.reshape(cov, (self.state_dim, self.state_dim))
 
-        # Compute mean
+        # Compute mean_u
         mean_det_coeff = tf.eye(self.state_dim)
         mean_det_coeff = mean_det_coeff + cov * self.rbf_scales ** -1
         mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
@@ -62,7 +68,6 @@ class RBFPolicy(Policy):
         scales_plus_cov = self.rbf_scales_mat + cov
         scales_plus_cov_inv = tf.linalg.inv(scales_plus_cov)
 
-        # num_rbf_features x state_dim
         diff_mui_mus = self.rbf_locs - loc
 
         mean_u_quad = tf.einsum('ij, jk, ik -> i',
@@ -73,7 +78,9 @@ class RBFPolicy(Policy):
         exp_mean_u_quad = tf.math.exp(-0.5 * mean_u_quad)
         rbf_comp_mean = mean_det_coeff * exp_mean_u_quad
 
-        mean_u = tf.squeeze(tf.matmul(self.rbf_weights, rbf_comp_mean))
+        mean_u = tf.einsum('i, i ->',
+                           self.rbf_weights,
+                           rbf_comp_mean)
 
         # Compute cov_su
         Q = tf.einsum('ij, jk, kl -> il',
@@ -88,7 +95,8 @@ class RBFPolicy(Policy):
         
         Q = Q * rbf_comp_mean[..., None]
 
-        cov_su = tf.matmul(self.rbf_weights, Q) - mean_u * tf.squeeze(loc)
+        cov_su = tf.einsum('i, ij -> j', self.rbf_weights, Q)
+        cov_su = cov_su - mean_u * tf.squeeze(loc)
 
         # Compute cov_uu
         cov_det_coeff = tf.eye(self.state_dim)
@@ -110,7 +118,7 @@ class RBFPolicy(Policy):
         cov_uu_quad = cov_uu_quad + 0.5 * tf.einsum('ijk, kl, ijl -> ij',
                                                     diff_mui_muj,
                                                     self.rbf_scales_mat,
-                                                    diff_mu_muj)
+                                                    diff_mui_muj)
 
         exp_cov_uu_quad = tf.math.exp(-0.5 * cov_uu_quad)
 
@@ -142,9 +150,9 @@ class RBFPolicy(Policy):
         of RBF squared lengthscales.
         """
 
-        rbf_scales = self.rbf_scales
+        rbf_scales = self.rbf_scales[0]
 
-        return tf.diag(rbf_scales)
+        return tf.linalg.diag(rbf_scales)
 
 
     def call(self, state):
