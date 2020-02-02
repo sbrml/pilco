@@ -62,7 +62,8 @@ class RBFPolicy(Policy):
 
         # Compute mean_u
         mean_det_coeff = tf.eye(self.state_dim)
-        mean_det_coeff = mean_det_coeff + cov * self.rbf_scales ** -1
+        mean_det_coeff = mean_det_coeff + tf.matmul(cov,
+                                        tf.linalg.diag(self.rbf_scales ** -1))
         mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
 
         scales_plus_cov = self.rbf_scales_mat + cov
@@ -158,14 +159,21 @@ class RBFPolicy(Policy):
     def call(self, state):
         
         # Convert state to tensor and reshape to be rank 2
-        state = tf.convert_to_tensor(state, dtype=tf.float32)
+        state = tf.convert_to_tensor(state, dtype=self.dtype)
         state = tf.reshape(state, (1, -1))
 
         # Compute quadratic form and exponentiate for each component
-        quad = ((state - self.rbf_locs) / self.rbf_scales) ** 2
-        exp_quads = tf.math.exp(-0.5 * tf.reduce_sum(quad, axis=-1))
+        diff_state_mui = state - self.rbf_locs
+        quad = tf.einsum('ik, lk, ik -> i',
+                         diff_state_mui,
+                         self.rbf_scales ** -1,
+                         diff_state_mui)
+
+        exp_quad = tf.math.exp(-0.5 * quad)
 
         # RBF output is the weighted sum of rbf components
-        rbf = tf.matmul(self.rbf_weights, exp_quads)
+        rbf = tf.einsum('i, i ->',
+                        self.rbf_weights,
+                        exp_quad)
 
         return rbf
