@@ -28,24 +28,31 @@ class RBFPolicy(Policy):
 
         # Set RBF policy locations
         rbf_locs_init = tf.zeros((num_rbf_features, state_dim), dtype=dtype)
-        self.rbf_locs = tf.Variable(rbf_locs_init, name='rbf_locs')
+        self.rbf_locs = tf.Variable(rbf_locs_init,
+                                    name='rbf_locs',
+                                    dtype=dtype)
 
         # Set RBF policy lengthscales
         rbf_log_scales_init = tf.zeros((1, state_dim), dtype=dtype)
         self.rbf_log_scales = tf.Variable(rbf_log_scales_init,
-                                          name='rbf_log_scales')
+                                          name='rbf_log_scales',
+                                          dtype=dtype)
 
         # Set RBF policy weights
         rbf_weights_init = tf.zeros((num_rbf_features,), dtype=dtype)
         self.rbf_weights = tf.Variable(rbf_weights_init,
-                                       name='rbf_weights')
+                                       name='rbf_weights',
+                                       dtype=dtype)
 
 
     def reset(self):
         # Sample policy parameters from standard normal
         for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
 
-            param.assign(tf.random.normal(mean=0, stddev=1, shape=param.shape))
+            param.assign(tf.random.normal(mean=0,
+                                          stddev=1,
+                                          shape=param.shape,
+                                          dtype=self.dtype))
 
 
     def match_moments(self, loc, cov):
