@@ -66,7 +66,7 @@ class RBFPolicy(Policy):
         cov = tf.reshape(cov, (self.state_dim, self.state_dim))
 
         # Compute mean_u
-        mean_det_coeff = tf.eye(self.state_dim)
+        mean_det_coeff = tf.eye(self.state_dim, dtype=self.dtype)
         mean_det_coeff = mean_det_coeff + tf.matmul(cov,
                                         tf.linalg.diag(1. / self.rbf_scales))
         mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
@@ -106,7 +106,7 @@ class RBFPolicy(Policy):
         cov_su = cov_su - mean_u * tf.squeeze(loc)
 
         # Compute cov_uu
-        cov_det_coeff = tf.eye(self.state_dim)
+        cov_det_coeff = tf.eye(self.state_dim, dtype=self.dtype)
         cov_det_coeff = cov_det_coeff + 2. * cov / self.rbf_scales
         cov_det_coeff = tf.linalg.det(cov_det_coeff) ** -0.5
 
