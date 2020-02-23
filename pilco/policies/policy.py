@@ -22,13 +22,22 @@ class Policy(tf.Module):
 
 
     @abc.abstractmethod
-    def match_moments(self, state_loc, state_cov):
+    def match_moments(self, state_loc, state_cov, joint_result=True):
         pass
 
 
     @abc.abstractmethod
     def call(self, state):
         pass
+
+    def join_covariance_matrices(self, cov_ss, cov_su, cov_uu):
+
+        cov_upper = tf.concat([cov_ss, cov_su], axis=1)
+        cov_lower = tf.concat([tf.transpose(cov_su), cov_uu], axis=1)
+
+        cov = tf.concat([cov_upper, cov_lower], axis=0)
+
+        return cov
 
 
     def __call__(self, state):

@@ -140,7 +140,14 @@ class RBFPolicy(Policy):
 
         cov_uu = cov_uu - mean_u ** 2
 
-        return mean_u, cov_su, cov_uu
+        cov_full = self.join_covariance_matrices(cov,
+                                                 cov_su[:, None],
+                                                 cov_uu[None, None])
+
+        mean_full = tf.concat([loc, mean_u[None, None]], axis=1)
+
+        return mean_full, cov_full
+
 
 
     @property

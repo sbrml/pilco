@@ -3,7 +3,14 @@ from abc import abstractmethod, ABC
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+from pilco.policies.policy import Policy
+from pilco.costs.costs import Cost
+
 tfd = tfp.distributions
+
+
+class AgentError(Exception):
+    pass
 
 
 class Agent(tf.keras.Model, ABC):
@@ -12,6 +19,7 @@ class Agent(tf.keras.Model, ABC):
                  state_dim,
                  action_dim,
                  policy,
+                 cost,
                  dtype,
                  name='agent',
                  **kwargs):
@@ -28,7 +36,15 @@ class Agent(tf.keras.Model, ABC):
         self.state_action_dim = state_dim + action_dim
 
         # Set instantiated policy
+        if not issubclass(policy.__class__, Policy):
+            raise AgentError("Policy must be a subclass of pilco.policies.Policy!")
         self.policy = policy
+
+        # Set cost
+        if not issubclass(cost.__class__, Cost):
+            raise AgentError("Cost must be a subclass of pilco.costs.Cost!")
+        self.cost = cost
+
 
         # Initialise variables to hold observed dynamics data
         inputs_init = tf.zeros((0, state_dim + action_dim), dtype=dtype)
@@ -117,6 +133,7 @@ class Agent(tf.keras.Model, ABC):
     def match_moments(self, mu_su, cov_su):
         pass
 
+
     def _validate_and_convert(self, xs, last_dim):
         """
         Convert xs into rank-2 tensor of the right datatype
@@ -136,6 +153,7 @@ class EQGPAgent(Agent):
                  state_dim,
                  action_dim,
                  policy,
+                 cost,
                  dtype,
                  name='agent',
                  **kwargs):
@@ -143,6 +161,7 @@ class EQGPAgent(Agent):
         super().__init__(state_dim=state_dim,
                          action_dim=action_dim,
                          policy=policy,
+                         cost=cost,
                          dtype=dtype,
                          name=name,
                          **kwargs)
@@ -418,6 +437,13 @@ class EQGPAgent(Agent):
 
         return pred_mean, pred_cov
 
+
+    def get_cost(self, state_loc, state_cov, horizon):
+
+        self.policy.match_moments()
+
+    def optimize_policy(self):
+        pass
 
     def train_dynamics_model(self):
         pass
