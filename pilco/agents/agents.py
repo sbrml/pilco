@@ -170,12 +170,8 @@ class EQGPAgent(Agent):
         eq_coeff_init = tf.ones((state_dim,), dtype=dtype)
         self.eq_coeff = tf.Variable(eq_coeff_init, name='eq_coeff', dtype=dtype)
 
-        eq_scales_init = tf.ones((state_dim, state_dim + action_dim),
-                                 dtype=dtype)
-        # eq_scales_init = tf.random.uniform(shape=(state_dim, state_dim + action_dim),
-        #                                    minval=0.8,
-        #                                    maxval=10.,
-        #                           dtype=dtype)
+        eq_scales_init = 1e-2 * tf.ones((state_dim, state_dim + action_dim),
+                                        dtype=dtype)
 
         self.eq_scales = tf.Variable(eq_scales_init,
                                      name='eq_scales',
@@ -187,12 +183,17 @@ class EQGPAgent(Agent):
                                           dtype=dtype)
 
 
+    @property
+    def parameters(self):
+        return (self.eq_coeff, self.eq_scales, self.eq_noise_coeff)
+
+
     def match_moments(self, mean_full, cov_full):
 
         # Reshape mean and covariance
         mean_full = tf.reshape(mean_full, shape=(1, self.state_action_dim))
         cov_full = tf.reshape(cov_full, shape=(self.state_action_dim,
-                                           self.state_action_dim))
+                                               self.state_action_dim))
 
         # ----------------------------------------------------------------------
         # Compute mean
@@ -218,6 +219,7 @@ class EQGPAgent(Agent):
         # N x D
         nu = self.dynamics_inputs - mean_full
 
+        # TODO: Two separate solves for the nu, reuse the solves for cross-cov
         mean_quad = tf.einsum('id, gdi -> gi',
                               nu,
                               tf.linalg.solve(cov_full_plus_scales,
@@ -333,9 +335,46 @@ class EQGPAgent(Agent):
 
         cov = cov + tf.linalg.diag(expected_var)
 
-        # Put data back in the original data domain
-        # mean = mean * self.outputs_std + self.outputs_mean
-        # cov = cov * self.outputs_std * self.outputs_std
+        # Compute Cov[x, Δ]
+        mean_full_tiled = tf.tile(tf.transpose(mean_full)[None, :, :],
+                                  (self.state_dim, 1, 1))
+
+        dynamics_inputs_tiled = tf.tile(tf.transpose(self.dynamics_inputs)[None, :, :],
+                                        (self.state_dim, 1, 1))
+
+        # A = cov_full + scales
+        # G x D x 1
+        A_inv_times_mean_full = tf.linalg.solve(cov_full_plus_scales,
+                                                mean_full_tiled)
+
+        # G x D x N
+        A_inv_times_dynamics_inputs = tf.linalg.solve(cov_full_plus_scales,
+                                                      dynamics_inputs_tiled)
+
+        # G x D x 1
+        cross_cov_mu = self.eq_scales[:, :, None] * A_inv_times_mean_full
+
+        # G x D x N
+        cross_cov_mu = cross_cov_mu + tf.einsum('ij, gjk -> gik',
+                                                cov_full,
+                                                A_inv_times_dynamics_inputs)
+
+        # D x G
+        cross_cov = tf.einsum('gk, gdk, gk -> dg',
+                              mean_exp_quad,
+                              cross_cov_mu,
+                              beta)
+
+        # S x G
+        cross_cov_s = cross_cov[:self.state_dim, :]
+        cross_cov_mean_prod = tf.transpose(mean_full[:, :self.state_dim]) * mean[None, :]
+        cross_cov_s = cross_cov_s - cross_cov_mean_prod
+
+        # Calcuate successor mean and covariance
+        mean = mean + mean_full[0, :self.state_dim]
+
+        cov = cov + cov_full[:self.state_dim, :self.state_dim]
+        cov = cov + cross_cov_s + tf.transpose(cross_cov_s)
 
         return mean, cov
 

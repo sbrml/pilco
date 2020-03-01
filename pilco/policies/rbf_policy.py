@@ -45,6 +45,11 @@ class RBFPolicy(Policy):
                                        dtype=dtype)
 
 
+    @property
+    def parameters(self):
+        return (self.rbf_locs, self.rbf_log_scales, self.rbf_weights)
+
+
     def reset(self):
         # Sample policy parameters from standard normal
         for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
@@ -58,11 +63,13 @@ class RBFPolicy(Policy):
     def match_moments(self, loc, cov):
 
         # Convert state mean to tensor and reshape to be rank 2
-        loc = tf.convert_to_tensor(loc, dtype=self.dtype)
+        loc = tf.convert_to_tensor(loc)
+        loc = tf.cast(loc, self.dtype)
         loc = tf.reshape(loc, (1, self.state_dim))
 
         # Convert state covariance to tensor and ensure it's a square matrix
-        cov = tf.convert_to_tensor(cov, dtype=self.dtype)
+        cov = tf.convert_to_tensor(cov)
+        cov = tf.cast(cov, self.dtype)
         cov = tf.reshape(cov, (self.state_dim, self.state_dim))
 
         # Compute mean_u
