@@ -1,4 +1,5 @@
 # Custom ignores
+.idea
 venv-pilco
 pilco-venv
 

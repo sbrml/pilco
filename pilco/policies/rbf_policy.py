@@ -3,7 +3,10 @@ from pilco.policies.policy import Policy
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+from not_tf_opt import UnconstrainedVariable
+
 tfd = tfp.distributions
+
 
 class RBFPolicy(Policy):
 
@@ -14,54 +17,47 @@ class RBFPolicy(Policy):
                  dtype,
                  name='rbf_policy',
                  **kwargs):
-
         super().__init__(state_dim=state_dim,
                          action_dim=action_dim,
                          name=name,
+                         dtype=dtype,
                          **kwargs)
-
-        # Set dtype
-        self.dtype = dtype
 
         # Number of radial basis functions
         self.num_rbf_features = num_rbf_features
 
         # Set RBF policy locations
         rbf_locs_init = tf.zeros((num_rbf_features, state_dim), dtype=dtype)
-        self.rbf_locs = tf.Variable(rbf_locs_init,
-                                    name='rbf_locs',
-                                    dtype=dtype)
+        self.rbf_locs = UnconstrainedVariable(rbf_locs_init,
+                                              name='rbf_locs',
+                                              dtype=dtype)
 
         # Set RBF policy lengthscales
         rbf_log_scales_init = tf.zeros((1, state_dim), dtype=dtype)
-        self.rbf_log_scales = tf.Variable(rbf_log_scales_init,
-                                          name='rbf_log_scales',
-                                          dtype=dtype)
+        self.rbf_log_scales = UnconstrainedVariable(rbf_log_scales_init,
+                                                    name='rbf_log_scales',
+                                                    dtype=dtype)
 
         # Set RBF policy weights
         rbf_weights_init = tf.zeros((num_rbf_features,), dtype=dtype)
-        self.rbf_weights = tf.Variable(rbf_weights_init,
-                                       name='rbf_weights',
-                                       dtype=dtype)
-
+        self.rbf_weights = UnconstrainedVariable(rbf_weights_init,
+                                                 name='rbf_weights',
+                                                 dtype=dtype)
 
     @property
     def parameters(self):
-        return (self.rbf_locs, self.rbf_log_scales, self.rbf_weights)
-
+        return self.rbf_locs.var, self.rbf_log_scales.var, self.rbf_weights.var
 
     def reset(self):
         # Sample policy parameters from standard normal
         for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
-
+            # TODO: update NTFO
             param.assign(tf.random.normal(mean=0,
                                           stddev=1,
-                                          shape=param.shape,
+                                          shape=param.var.shape,
                                           dtype=self.dtype))
 
-
     def match_moments(self, loc, cov):
-
         # Convert state mean to tensor and reshape to be rank 2
         loc = tf.convert_to_tensor(loc)
         loc = tf.cast(loc, self.dtype)
@@ -75,13 +71,13 @@ class RBFPolicy(Policy):
         # Compute mean_u
         mean_det_coeff = tf.eye(self.state_dim, dtype=self.dtype)
         mean_det_coeff = mean_det_coeff + tf.matmul(cov,
-                                        tf.linalg.diag(1. / self.rbf_scales))
+                                                    tf.linalg.diag(1. / self.rbf_scales))
         mean_det_coeff = tf.linalg.det(mean_det_coeff) ** -0.5
 
         scales_plus_cov = self.rbf_scales_mat + cov
         scales_plus_cov_inv = tf.linalg.inv(scales_plus_cov)
 
-        diff_mui_mus = self.rbf_locs - loc
+        diff_mui_mus = self.rbf_locs() - loc
 
         mean_u_quad = tf.einsum('ij, jk, ik -> i',
                                 diff_mui_mus,
@@ -92,14 +88,14 @@ class RBFPolicy(Policy):
         rbf_comp_mean = mean_det_coeff * exp_mean_u_quad
 
         mean_u = tf.einsum('i, i ->',
-                           self.rbf_weights,
+                           self.rbf_weights(),
                            rbf_comp_mean)
 
         # Compute cov_su
         Q = tf.einsum('ij, jk, lk -> li',
                       cov,
                       scales_plus_cov_inv,
-                      self.rbf_locs)
+                      self.rbf_locs())
 
         Q = Q + tf.einsum('ij, jk, lk -> li',
                           self.rbf_scales_mat,
@@ -108,7 +104,7 @@ class RBFPolicy(Policy):
 
         Q = Q * rbf_comp_mean[:, None]
 
-        cov_su = tf.einsum('i, ij -> j', self.rbf_weights, Q)
+        cov_su = tf.einsum('i, ij -> j', self.rbf_weights(), Q)
 
         cov_su = cov_su - mean_u * tf.squeeze(loc)
 
@@ -120,11 +116,11 @@ class RBFPolicy(Policy):
         half_scales_plus_cov = 0.5 * self.rbf_scales_mat + cov
         half_scales_plus_cov_inv = tf.linalg.inv(half_scales_plus_cov)
 
-        muij = (self.rbf_locs[None, :, :] + self.rbf_locs[:, None, :]) / 2
+        muij = (self.rbf_locs()[None, :, :] + self.rbf_locs()[:, None, :]) / 2
 
         diff_muij_mus = muij - loc[None, :, :]
 
-        diff_mui_muj = self.rbf_locs[None, :, :] - self.rbf_locs[:, None, :]
+        diff_mui_muj = self.rbf_locs()[None, :, :] - self.rbf_locs()[:, None, :]
 
         cov_uu_quad = tf.einsum('ijk, kl, ijl -> ij',
                                 diff_muij_mus,
@@ -141,9 +137,9 @@ class RBFPolicy(Policy):
         S = cov_det_coeff * exp_cov_uu_quad
 
         cov_uu = tf.einsum('i, ij, j ->',
-                           self.rbf_weights,
+                           self.rbf_weights(),
                            S,
-                           self.rbf_weights)
+                           self.rbf_weights())
 
         cov_uu = cov_uu - mean_u ** 2
 
@@ -155,16 +151,13 @@ class RBFPolicy(Policy):
 
         return mean_full, cov_full
 
-
-
     @property
     def rbf_scales(self):
         """
         Returns 1 x state_dim tensor of RBF squared lengthscales.
         """
 
-        return tf.math.exp(self.rbf_log_scales) ** 2
-
+        return tf.math.exp(self.rbf_log_scales()) ** 2
 
     @property
     def rbf_scales_mat(self):
@@ -177,15 +170,13 @@ class RBFPolicy(Policy):
 
         return tf.linalg.diag(rbf_scales)
 
-
     def call(self, state):
-
         # Convert state to tensor and reshape to be rank 2
         state = tf.convert_to_tensor(state, dtype=self.dtype)
         state = tf.reshape(state, (1, -1))
 
         # Compute quadratic form and exponentiate for each component
-        diff_state_mui = state - self.rbf_locs
+        diff_state_mui = state - self.rbf_locs()
         quad = tf.einsum('ik, lk, ik -> i',
                          diff_state_mui,
                          self.rbf_scales ** -1,
@@ -195,7 +186,7 @@ class RBFPolicy(Policy):
 
         # RBF output is the weighted sum of rbf components
         rbf = tf.einsum('i, i ->',
-                        self.rbf_weights,
+                        self.rbf_weights(),
                         exp_quad)
 
         return rbf

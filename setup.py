@@ -26,7 +26,8 @@ setup(
         'numpy',
         'matplotlib',
         'tensorflow',
-        'tqdm'
+        'tqdm',
+        'not-tf-opt',
     ],
     zip_safe=False,
 )

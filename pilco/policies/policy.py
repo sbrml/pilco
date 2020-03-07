@@ -8,12 +8,15 @@ class Policy(tf.Module):
                  state_dim,
                  action_dim,
                  name='policy',
+                 dtype=tf.float64,
                  **kwargs):
 
         super().__init__(name=name, **kwargs)
 
         self.state_dim = state_dim
         self.action_dim = action_dim
+
+        self.dtype = dtype
 
 
     @abc.abstractmethod

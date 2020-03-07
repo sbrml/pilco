@@ -18,10 +18,10 @@ class Environment:
 
     def step(self, action):
 
-        state = self.env.state
+        state = self.env.state.copy()
 
         self.env.step(action)
 
-        next_state = self.env.state
+        next_state = self.env.state.copy()
 
         return state, action, next_state
