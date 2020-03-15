@@ -3,10 +3,13 @@ import numpy as np
 
 class Environment:
 
-    def __init__(self, name):
+    def __init__(self,
+                 name,
+                 sub_sampling_factor=1):
 
         self.env = gym.make(name)
         self.env.reset()
+        self.sub_sampling_factor = sub_sampling_factor
 
 
     def reset(self):
@@ -19,8 +22,10 @@ class Environment:
     def step(self, action):
 
         state = self.env.state.copy()
-
-        self.env.step(action)
+        
+        for i in range(self.sub_sampling_factor):
+            
+            self.env.step(action)
 
         next_state = self.env.state.copy()
 
