@@ -172,8 +172,8 @@ class EQGPAgent(Agent):
                                         name='eq_coeff',
                                         dtype=dtype)
 
-        eq_scales_init = 1e-2 * tf.ones((state_dim, state_dim + action_dim),
-                                        dtype=dtype)
+        eq_scales_init = 1e0 * tf.ones((state_dim, state_dim + action_dim),
+                                       dtype=dtype)
 
         self.eq_scales = BoundedVariable(eq_scales_init,
                                          lower=1e-6,
@@ -187,6 +187,22 @@ class EQGPAgent(Agent):
                                               upper=1e3,
                                               name='eq_noise_coeff',
                                               dtype=dtype)
+
+
+    def set_eq_scales_from_data(self):
+        
+        sq_diffs = tf.math.squared_difference(self.dynamics_inputs[None, :, :],
+                                              self.dynamics_inputs[:, None, :])
+
+        norms = tf.reduce_sum(sq_diffs, axis=-1) ** 0.5
+
+        median = tfp.stats.percentile(norms, 50.0)
+
+        eq_scales_init = median * tf.ones((self.state_dim, self.state_action_dim),
+                                          dtype=self.dtype)
+
+        self.eq_scales.assign(eq_scales_init)
+        
 
     @property
     def parameters(self):
@@ -321,7 +337,6 @@ class EQGPAgent(Agent):
         # S
         expected_var = tf.linalg.trace(data_cov_inv_times_Q_diag)
         expected_var = self.eq_coeff() - expected_var
-        print(f"Cov diag components:\n{expected_var}")
 
         # Calculate general covariance terms
         # S x N
@@ -338,7 +353,6 @@ class EQGPAgent(Agent):
         cov = cov - mean_times_mean
 
         cov = cov + tf.linalg.diag(expected_var)
-        print(f"cov without cross cov:\n {cov}")
 
         # Compute Cov[x, Δ]
         mean_full_tiled = tf.tile(tf.transpose(mean_full)[None, :, :],
@@ -374,13 +388,11 @@ class EQGPAgent(Agent):
         cross_cov_s = cross_cov[:self.state_dim, :]
         cross_cov_mean_prod = tf.transpose(mean_full[:, :self.state_dim]) * mean[None, :]
         cross_cov_s = cross_cov_s - cross_cov_mean_prod
-        print(f"Cross cov:\n{cross_cov_s}")
 
         # Calcuate successor mean and covariance
         mean = mean + mean_full[0, :self.state_dim]
 
         cov = cov + cov_full[:self.state_dim, :self.state_dim]
-        print(f"Cov with cov full:\n{cov}")
 
         cov = cov + cross_cov_s + tf.transpose(cross_cov_s)
 
@@ -454,6 +466,7 @@ class EQGPAgent(Agent):
         # S x K x K
         k_star_star = self.exponentiated_quadratic(x_star,
                                                    x_star)
+        k_star_star = tf.linalg.diag_part(k_star_star)
 
         # S x N x N
         K_plus_noise = self.data_covariance
@@ -467,16 +480,12 @@ class EQGPAgent(Agent):
         cov_inv_k = tf.linalg.solve(K_plus_noise,
                                     k_star)
 
-        # S x K x K
-        k_cov_inv_k = tf.einsum('snk, snl -> skl',
+        # S x K
+        k_cov_inv_k = tf.einsum('snk, snk -> sk',
                                 k_star,
                                 cov_inv_k)
 
-        pred_cov = k_star_star - k_cov_inv_k
-
-        # Put data back in original data domian
-        # pred_mean = pred_mean * self.outputs_std + self.outputs_mean
-        # pred_cov = pred_cov * self.outputs_std * self.outputs_std
+        pred_cov = tf.transpose(k_star_star - k_cov_inv_k)
 
         return pred_mean, pred_cov
 
