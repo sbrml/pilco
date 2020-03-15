@@ -321,6 +321,7 @@ class EQGPAgent(Agent):
         # S
         expected_var = tf.linalg.trace(data_cov_inv_times_Q_diag)
         expected_var = self.eq_coeff() - expected_var
+        print(f"Cov diag components:\n{expected_var}")
 
         # Calculate general covariance terms
         # S x N
@@ -337,6 +338,7 @@ class EQGPAgent(Agent):
         cov = cov - mean_times_mean
 
         cov = cov + tf.linalg.diag(expected_var)
+        print(f"cov without cross cov:\n {cov}")
 
         # Compute Cov[x, Δ]
         mean_full_tiled = tf.tile(tf.transpose(mean_full)[None, :, :],
@@ -372,11 +374,14 @@ class EQGPAgent(Agent):
         cross_cov_s = cross_cov[:self.state_dim, :]
         cross_cov_mean_prod = tf.transpose(mean_full[:, :self.state_dim]) * mean[None, :]
         cross_cov_s = cross_cov_s - cross_cov_mean_prod
+        print(f"Cross cov:\n{cross_cov_s}")
 
         # Calcuate successor mean and covariance
         mean = mean + mean_full[0, :self.state_dim]
 
         cov = cov + cov_full[:self.state_dim, :self.state_dim]
+        print(f"Cov with cov full:\n{cov}")
+
         cov = cov + cross_cov_s + tf.transpose(cross_cov_s)
 
         return mean, cov
