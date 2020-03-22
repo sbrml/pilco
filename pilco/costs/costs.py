@@ -1,6 +1,8 @@
 from abc import abstractmethod
 import tensorflow as tf
 
+from pilco.transforms import MomentMatchingTransform, IdentityTransform
+
 
 class CostError(Exception):
     pass
@@ -25,8 +27,13 @@ class Cost(tf.Module):
 
 class EQCost(Cost):
 
-
-    def __init__(self, target_loc, target_scale, dtype, name="eq_cost", **kwargs):
+    def __init__(self,
+                 target_loc,
+                 target_scale,
+                 dtype,
+                 transform = None,
+                 name="eq_cost",
+                 **kwargs):
 
         super().__init__(name=name,
                          dtype=dtype,
@@ -43,6 +50,10 @@ class EQCost(Cost):
         self.target_scale = tf.cast(self.target_scale, dtype)
         self.target_scale = tf.reshape(self.target_scale, [1, 1])
 
+        if transform is None:
+            transform = IdentityTransform()
+
+        self.transform: MomentMatchingTransform = transform
 
     def expected_cost(self, loc, cov):
 
@@ -59,6 +70,10 @@ class EQCost(Cost):
         if tf.rank(cov) != 2 or cov.shape[0] != cov.shape[1] or cov.shape[1] != loc.shape[1]:
             raise CostError(f"Incorrect dimensions for covariance!"
                             f" (Expected ({loc.shape[1], loc.shape[1]}), found {cov.shape})")
+
+        loc, cov = self.transform.match_moments(loc=loc,
+                                                cov=cov,
+                                                indices=tf.constant([0], dtype=tf.int32))
 
         I = tf.eye(cov.shape[0], dtype=self.dtype)
 
@@ -79,7 +94,6 @@ class EQCost(Cost):
         cost = 1. - exp_quad / det_coeff
 
         return cost
-
 
     def call(self, loc):
 

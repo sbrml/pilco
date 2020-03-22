@@ -1,6 +1,7 @@
 from distutils.util import convert_path
 from setuptools import setup, find_packages
 
+
 def readme() -> str:
     with open('README.md') as f:
         return f.read()

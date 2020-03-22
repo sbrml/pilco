@@ -1,5 +1,5 @@
 import gym
-import numpy as np
+
 
 class Environment:
 
@@ -11,13 +11,11 @@ class Environment:
         self.env.reset()
         self.sub_sampling_factor = sub_sampling_factor
 
-
     def reset(self):
 
         self.env.reset()
 
         return self.env.state
-
 
     def step(self, action):
 
@@ -30,3 +28,5 @@ class Environment:
         next_state = self.env.state.copy()
 
         return state, action, next_state
+
+

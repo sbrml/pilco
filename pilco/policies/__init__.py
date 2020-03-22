@@ -1,3 +1,3 @@
 from .policy import *
 from .rbf_policy import *
-from .transforms import *
+from .transformed_policy import *

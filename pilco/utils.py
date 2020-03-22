@@ -1,6 +1,13 @@
 import tensorflow as tf
 
 
+def get_complementary_indices(indices, size):
+
+    indices = tf.convert_to_tensor(indices)
+
+    return tf.sparse.to_dense(tf.sets.difference(tf.range(size)[None, :], indices[None, :]))[0]
+
+
 def quadratic_form(x, loc, cov):
 
     # Uprank tensors if needed

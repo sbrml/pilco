@@ -3,7 +3,8 @@ import tensorflow as tf
 import numpy as np
 
 from pilco.environments import Environment
-from pilco.policies import RBFPolicy, SineBoundedActionPolicy
+from pilco.policies import RBFPolicy, TransformedPolicy
+from pilco.transforms import SineTransform, CosineTransform
 from pilco.costs import EQCost
 from pilco.agents import EQGPAgent
 
@@ -20,40 +21,41 @@ import imageio
 
 experiment = Experiment('pendulum-experiment')
 
+
 @experiment.config
 def config():
 
     # Lengthscale for gaussian cost
-    target_scale = np.pi
+    target_scale = 1.
 
     # Number of rbf features in policy
     num_rbf_features = 50
 
     # Subsampling factor
-    sub_sampling_factor = 4
+    sub_sampling_factor = 2
 
     # Number of episodes of random sampling of data
-    num_random_episodes = 50
+    num_random_episodes = 5
 
     # Number of steps per random episode
-    num_steps_per_random_episode = 1
+    num_steps_per_random_episode = 20
 
     # Parameters for agent-environment loops
     optimisation_horizon = 50
     num_optim_steps = 50
 
     num_episodes = 10
-    num_steps_per_episode = 30
+    num_steps_per_episode = 60
 
     # Number of optimisation steps for dynamics GPs
     num_dynamics_optim_steps = 50
 
     # Policy learn rate
-    policy_lr = 1e0
+    policy_lr = 1e-1
     scaled_policy_lr = policy_lr / optimisation_horizon
 
     # Dynamics learn rate
-    dynamics_lr = 1e-1
+    dynamics_lr = 1e-2
 
     # Optimsation exit criterion tolerance
     tolerance = 1e-5
@@ -87,8 +89,7 @@ def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
     
     print(f'RMSE: {rmse} SMSE {smse} Min {min_diff} Max {max_diff}')
     
-    
-    
+
 def sample_transitions_uniformly(env, num_episodes, num_steps, seed):
     
     np.random.seed(seed)
@@ -118,6 +119,7 @@ def sample_transitions_uniformly(env, num_episodes, num_steps, seed):
             
     return state_actions, next_states
 
+
 @experiment.automain
 def experiment(num_random_episodes,
                num_steps_per_random_episode,
@@ -133,7 +135,6 @@ def experiment(num_random_episodes,
                dynamics_lr,
                tolerance):
     
-
     dtype = tf.float64
 
     # Create pendulum environment and reset
@@ -142,10 +143,15 @@ def experiment(num_random_episodes,
     env.reset()
 
     # Create stuff for our controller
-    target_loc = tf.zeros([1, 2])
+    target_loc = tf.constant([[1., 0.]], dtype=dtype)
+
+    cost_transform = CosineTransform(lower=-1.,
+                                     upper=1.,
+                                     dtype=dtype)
 
     eq_cost = EQCost(target_loc=target_loc,
                      target_scale=target_scale,
+                     transform=cost_transform,
                      dtype=dtype)
 
     # Create EQ policy
@@ -154,9 +160,13 @@ def experiment(num_random_episodes,
                           num_rbf_features=num_rbf_features,
                           dtype=dtype)
 
-    eq_policy = SineBoundedActionPolicy(eq_policy,
-                                        lower=-2,
-                                        upper=2)
+    # We can bound the range of the policy by passing it through an appropriately
+    # Shifted and scaled sine function.
+    sine_transform = SineTransform(lower=-2,
+                                   upper=2)
+
+    eq_policy = TransformedPolicy(policy=eq_policy,
+                                  transform=sine_transform)
 
     # Create agent
     eq_agent = EQGPAgent(state_dim=2,
@@ -165,24 +175,27 @@ def experiment(num_random_episodes,
                          cost=eq_cost,
                          dtype=dtype)
 
+    eq_agent.policy.reset()
+
     for episode in trange(num_random_episodes):
         
         state = env.reset()
         
         # state = np.array([np.pi, 8]) * (2 * np.random.uniform(size=(2,)) - 1)
-        state = np.array([-np.pi, 0.])
+        state = np.array([-np.pi + np.random.normal(0., 0.1), 0.])
         env.env.env.state = state
         
         for step in range(num_steps_per_random_episode):
             
             action = tf.random.uniform(shape=()) * 4. - 2
             state, action, next_state = env.step(action[None].numpy())
-            
+
             eq_agent.observe(state, action, next_state)
 
+    init_state = tf.constant([[-np.pi + np.random.normal(0., 0.1), 0.]], dtype=tf.float64)
+    init_cov = 1e-2 * tf.eye(2, dtype=tf.float64)
 
-    init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
-    init_cov = tf.eye(2, dtype=tf.float64)
+    print(scaled_policy_lr)
 
     policy_optimiser = tf.optimizers.Adam(scaled_policy_lr)
     dynamics_optimiser = tf.optimizers.Adam(dynamics_lr)
@@ -217,7 +230,7 @@ def experiment(num_random_episodes,
         print(f'{eq_agent.eq_scales().numpy()}')
         
         eq_agent.policy.reset()
-        
+
         prev_loss = np.inf
         with trange(num_optim_steps) as bar:
 
@@ -226,6 +239,8 @@ def experiment(num_random_episodes,
                 cost = 0.
                 loc = init_state
                 cov = init_cov
+
+                step_costs = []
 
                 with tf.GradientTape(watch_accessed_variables=False) as tape:
 
@@ -237,7 +252,18 @@ def experiment(num_random_episodes,
 
                         loc, cov = eq_agent.match_moments(mean_full, cov_full)
 
-                        cost = cost + eq_agent.cost.expected_cost(loc[None, :], cov)
+                        # loc = 0.0001 * loc + init_state
+                        # loc = loc[0]
+                        # #print(loc)
+                        # cov = 1e-6 * cov + 1e-2 * init_cov
+                        # #print(cov)
+                        # #print("cost", eq_agent.cost.expected_cost(tf.constant([[0., 0.]]), 1e-4 * tf.eye(2)))
+
+                        step_cost = eq_agent.cost.expected_cost(loc[None, :], cov)
+
+                        cost = cost + step_cost
+
+                        step_costs.append(step_cost)
 
                 gradients = tape.gradient(cost, eq_agent.policy.parameters)
 
@@ -248,13 +274,14 @@ def experiment(num_random_episodes,
                     break
                     
                 prev_loss = cost
-                
+
+                print(tf.stack(step_costs, axis=0).numpy())
                 bar.set_description(f'Cost: {cost.numpy():.3f}')
-        
+
         print(f'Performing episode {episode + 1}:')
         
         env.reset()
-        env.env.env.state = np.array([-np.pi, 0.])
+        env.env.env.state = init_state.numpy()[0]
 
         frames = []
         
@@ -263,7 +290,7 @@ def experiment(num_random_episodes,
             frames.append(env.env.render(mode='rgb_array'))
 
             action = eq_agent.act(state)
-            state, action, next_state = env.step(action[None].numpy())
+            state, action, next_state = env.step(action.numpy())
             eq_agent.observe(state, action, next_state)
 
         env.env.close()
