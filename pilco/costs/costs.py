@@ -30,6 +30,7 @@ class EQCost(Cost):
     def __init__(self,
                  target_loc,
                  target_scale,
+                 indices,
                  dtype,
                  transform = None,
                  name="eq_cost",
@@ -49,6 +50,9 @@ class EQCost(Cost):
         self.target_scale = tf.convert_to_tensor(target_scale)
         self.target_scale = tf.cast(self.target_scale, dtype)
         self.target_scale = tf.reshape(self.target_scale, [1, 1])
+
+        self.indices = tf.convert_to_tensor(indices)
+        self.indices = tf.cast(self.indices, tf.int32)
 
         if transform is None:
             transform = IdentityTransform()
@@ -71,6 +75,15 @@ class EQCost(Cost):
             raise CostError(f"Incorrect dimensions for covariance!"
                             f" (Expected ({loc.shape[1], loc.shape[1]}), found {cov.shape})")
 
+        # Slice indices into the location vector
+        loc_indices = self.indices[:, None]
+
+        # Get slices into the covariance matrix
+        cov_indices = tf.stack(tf.meshgrid(loc_indices, loc_indices), axis=2)
+
+        loc = tf.gather_nd(loc[0], loc_indices)[None, :]
+        cov = tf.gather_nd(cov, cov_indices)
+
         loc, cov = self.transform.match_moments(loc=loc,
                                                 cov=cov,
                                                 indices=tf.constant([0], dtype=tf.int32))
@@ -80,6 +93,7 @@ class EQCost(Cost):
         cov_plus_target_scale = cov + I * self.target_scale**2
 
         diffs = loc - self.target_loc
+        #diffs = tf.concat([diffs_[:, :1], tf.zeros((1, 1))], axis=0)
 
         quad = tf.linalg.solve(cov_plus_target_scale, tf.transpose(diffs))
         quad = tf.einsum('ij, jk ->',

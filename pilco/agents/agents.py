@@ -167,8 +167,8 @@ class EQGPAgent(Agent):
         # Set EQ covariance parameters: coefficient, scales and noise level
         eq_coeff_init = tf.ones((state_dim,), dtype=dtype)
         self.eq_coeff = BoundedVariable(eq_coeff_init,
-                                        lower=1e-6,
-                                        upper=1e3,
+                                        lower=1e-4,
+                                        upper=1e2,
                                         name='eq_coeff',
                                         dtype=dtype)
 
@@ -176,21 +176,21 @@ class EQGPAgent(Agent):
                                        dtype=dtype)
 
         self.eq_scales = BoundedVariable(eq_scales_init,
-                                         lower=1e-6,
-                                         upper=1e3,
+                                         lower=1e-1,
+                                         upper=1e2,
                                          name='eq_scales',
                                          dtype=dtype)
 
-        eq_noise_coeff_init = 1e-4 * tf.ones((state_dim,), dtype=dtype)
+        eq_noise_coeff_init = 1e-2 * tf.ones((state_dim,), dtype=dtype)
         self.eq_noise_coeff = BoundedVariable(eq_noise_coeff_init,
-                                              lower=1e-6,
-                                              upper=1e3,
+                                              lower=1e-3,
+                                              upper=1e1,
                                               name='eq_noise_coeff',
                                               dtype=dtype)
 
 
     def set_eq_scales_from_data(self):
-        
+
         sq_diffs = tf.math.squared_difference(self.dynamics_inputs[None, :, :],
                                               self.dynamics_inputs[:, None, :])
 
