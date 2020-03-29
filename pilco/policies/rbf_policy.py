@@ -1,5 +1,7 @@
 from pilco.policies.policy import Policy
 
+import numpy as np
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 
@@ -50,12 +52,32 @@ class RBFPolicy(Policy):
 
     def reset(self):
         # Sample policy parameters from standard normal
-        for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
-            # TODO: update NTFO
-            param.assign(tf.random.normal(mean=0,
-                                          stddev=1,
-                                          shape=param.var.shape,
-                                          dtype=self.dtype))
+        rbf_theta_locs = tf.random.uniform(shape=(self.num_rbf_features,),
+                                           minval=-np.pi,
+                                           maxval=np.pi,
+                                           dtype=self.dtype)
+
+        rbf_theta_dot_locs = tf.random.uniform(shape=(self.num_rbf_features,),
+                                               minval=-8.,
+                                               maxval=8.,
+                                               dtype=self.dtype)
+
+        self.rbf_locs.assign(tf.stack([rbf_theta_locs, rbf_theta_dot_locs], axis=-1))
+
+        self.rbf_log_scales.assign(self.num_rbf_features ** -0.5 * tf.ones(shape=(1, self.state_dim), dtype=self.dtype))
+
+        rbf_weights_init = tf.random.normal(shape=(self.num_rbf_features,),
+                                            mean=0.,
+                                            stddev=1.,
+                                            dtype=self.dtype)
+        self.rbf_weights.assign(rbf_weights_init)
+
+        # for param in [self.rbf_locs, self.rbf_log_scales, self.rbf_weights]:
+        #     # TODO: update NTFO
+        #     param.assign(tf.random.normal(mean=0,
+        #                                   stddev=1,
+        #                                   shape=param.var.shape,
+        #                                   dtype=self.dtype))
 
     def match_moments(self, loc, cov):
         # Convert state mean to tensor and reshape to be rank 2

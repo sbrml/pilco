@@ -30,6 +30,7 @@ class EQCost(Cost):
     def __init__(self,
                  target_loc,
                  target_scale,
+                 target_dim,
                  indices,
                  dtype,
                  transform = None,
@@ -40,16 +41,21 @@ class EQCost(Cost):
                          dtype=dtype,
                          **kwargs)
 
+        self.target_dim = target_dim
+
         self.target_loc = tf.convert_to_tensor(target_loc)
         self.target_loc = tf.cast(self.target_loc, dtype)
 
-        if tf.rank(self.target_loc) != 2 or self.target_loc.shape[0] != 1:
-            raise CostError(f"Target location must be 1 x target_dimension!"
-                            f" (Found shape {self.target_loc.shape})")
+        if self.target_loc.shape != (1, target_dim):
+            raise CostError(f"Expected target_loc.shape == (1, target_dim) "
+                            f"found {self.target_loc.shape}, {(1, target_dim)}.")
 
         self.target_scale = tf.convert_to_tensor(target_scale)
         self.target_scale = tf.cast(self.target_scale, dtype)
-        self.target_scale = tf.reshape(self.target_scale, [1, 1])
+
+        if self.target_loc.shape != self.target_scale.shape:
+            raise CostError(f"Expected target_loc.shape == target_scale.shape "
+                            f"found {self.target_loc.shape}, {self.target_scale.shape}.")
 
         self.indices = tf.convert_to_tensor(indices)
         self.indices = tf.cast(self.indices, tf.int32)
@@ -64,9 +70,9 @@ class EQCost(Cost):
         loc = tf.convert_to_tensor(loc)
         loc = tf.cast(loc, self.dtype)
 
-        if tf.rank(loc) != 2 or loc.shape[0] != 1:
-            raise CostError(f"Location must be 1 x target_dimension!"
-                            f" (Found shape {loc.shape})")
+        if loc.shape != (1, self.target_dim):
+            raise CostError(f"Location shape must be equal to (1, target_dim)"
+                            f" (Found shape {loc.shape}, {(1, self.target_dim)}")
 
         cov = tf.convert_to_tensor(cov)
         cov = tf.cast(cov, self.dtype)
@@ -75,14 +81,14 @@ class EQCost(Cost):
             raise CostError(f"Incorrect dimensions for covariance!"
                             f" (Expected ({loc.shape[1], loc.shape[1]}), found {cov.shape})")
 
-        # Slice indices into the location vector
-        loc_indices = self.indices[:, None]
-
-        # Get slices into the covariance matrix
-        cov_indices = tf.stack(tf.meshgrid(loc_indices, loc_indices), axis=2)
-
-        loc = tf.gather_nd(loc[0], loc_indices)[None, :]
-        cov = tf.gather_nd(cov, cov_indices)
+        # # Slice indices into the location vector
+        # loc_indices = self.indices[:, None]
+        #
+        # # Get slices into the covariance matrix
+        # cov_indices = tf.stack(tf.meshgrid(loc_indices, loc_indices), axis=2)
+        #
+        # loc = tf.gather_nd(loc[0], loc_indices)[None, :]
+        # cov = tf.gather_nd(cov, cov_indices)
 
         loc, cov = self.transform.match_moments(loc=loc,
                                                 cov=cov,
@@ -90,10 +96,9 @@ class EQCost(Cost):
 
         I = tf.eye(cov.shape[0], dtype=self.dtype)
 
-        cov_plus_target_scale = cov + I * self.target_scale**2
+        cov_plus_target_scale = cov + I * tf.linalg.diag(self.target_scale[0, :] ** 2)
 
         diffs = loc - self.target_loc
-        #diffs = tf.concat([diffs_[:, :1], tf.zeros((1, 1))], axis=0)
 
         quad = tf.linalg.solve(cov_plus_target_scale, tf.transpose(diffs))
         quad = tf.einsum('ij, jk ->',
@@ -110,5 +115,4 @@ class EQCost(Cost):
         return cost
 
     def call(self, loc):
-
         return self.expected_cost(loc, tf.zeros([loc.shape[1], loc.shape[1]]))

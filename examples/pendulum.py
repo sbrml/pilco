@@ -19,6 +19,8 @@ import time
 
 import imageio
 
+from pilco.utils import plot_pendulum_rollouts
+
 experiment = Experiment('pendulum-experiment')
 
 
@@ -26,7 +28,7 @@ experiment = Experiment('pendulum-experiment')
 def config():
 
     # Lengthscale for gaussian cost
-    target_scale = 1.
+    target_scale = [[1.0, 8.0]]
 
     # Number of rbf features in policy
     num_rbf_features = 50
@@ -41,24 +43,23 @@ def config():
     num_steps_per_random_episode = 30
 
     # Parameters for agent-environment loops
-    optimisation_horizon = 30
-    num_optim_steps = 50
+    optimisation_horizon = 50
+    num_optim_steps = 100
 
     num_episodes = 10
-    num_steps_per_episode = 30
+    num_steps_per_episode = 50
 
     # Number of optimisation steps for dynamics GPs
     num_dynamics_optim_steps = 50
 
     # Policy learn rate
-    policy_lr = 1e-1
-    scaled_policy_lr = policy_lr / optimisation_horizon
+    policy_lr = 5e-2
 
     # Dynamics learn rate
-    dynamics_lr = 1e-2
+    dynamics_lr = 1e-1
 
     # Number of times to restart the dynamics optimizer
-    dynamics_optimisation_restarts = 10
+    dynamics_optimisation_restarts = 3
 
     # Optimsation exit criterion tolerance
     tolerance = 1e-5
@@ -135,7 +136,7 @@ def experiment(num_random_episodes,
                num_optim_steps,
                num_episodes,
                num_steps_per_episode,
-               scaled_policy_lr,
+               policy_lr,
                dynamics_lr,
                tolerance):
     
@@ -147,7 +148,7 @@ def experiment(num_random_episodes,
     env.reset()
 
     # Create stuff for our controller
-    target_loc = tf.constant([[1.]], dtype=dtype)
+    target_loc = tf.constant([[1., 0.]], dtype=dtype)
 
     cost_transform = CosineTransform(lower=-1.,
                                      upper=1.,
@@ -155,6 +156,7 @@ def experiment(num_random_episodes,
 
     eq_cost = EQCost(target_loc=target_loc,
                      target_scale=target_scale,
+                     target_dim=2,
                      transform=cost_transform,
                      indices=[0],
                      dtype=dtype)
@@ -200,15 +202,23 @@ def experiment(num_random_episodes,
 
             eq_agent.observe(state, action, next_state)
 
-    init_state = tf.constant([[-np.pi + np.random.normal(0., 0.1), 0.]], dtype=tf.float64)
+    init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
     init_cov = 1e-4 * tf.eye(2, dtype=tf.float64)
 
-    print(scaled_policy_lr)
-
-    policy_optimiser = tf.optimizers.Adam(scaled_policy_lr)
+    policy_optimiser = tf.optimizers.Adam(policy_lr)
     dynamics_optimiser = tf.optimizers.Adam(dynamics_lr)
 
     for episode in range(num_episodes):
+
+        print('\nEvaluating dynamics before optimisation')
+        print(f'Length scales {eq_agent.eq_scales().numpy()}')
+        print(f'Signal amplitude {eq_agent.eq_coeff().numpy()}')
+        print(f'Noise amplitude {eq_agent.eq_noise_coeff().numpy()}')
+        evaluate_agent_dynamics(eq_agent,
+                                env,
+                                num_episodes=100,
+                                num_steps=1,
+                                seed=0)
 
         print('Optimising dynamics')
 
@@ -226,9 +236,8 @@ def experiment(num_random_episodes,
             # Randomly initialize dynamics hyperparameters
             eq_agent.set_eq_scales_from_data()
             eq_agent.eq_scales.assign(eq_agent.eq_scales() + tf.random.uniform(minval=-0.05, maxval=1.05,
-                                                                               shape=best_eq_scales.shape,
-                                                                               dtype=dtype))
-
+                                                                               dtype=dtype,
+                                                                               shape=best_eq_scales.shape))
             eq_agent.eq_coeff.assign(tf.random.uniform(minval=5e-1, maxval=2e0, shape=best_eq_coeff.shape, dtype=dtype))
             eq_agent.eq_noise_coeff.assign(tf.random.uniform(minval=5e-2, maxval=2e-1, shape=best_eq_noise_coeff.shape, dtype=dtype))
 
@@ -238,11 +247,16 @@ def experiment(num_random_episodes,
                     tape.watch(eq_agent.parameters)
 
                     loss = -eq_agent.dynamics_log_marginal()
+                    loss = loss / tf.cast(eq_agent.num_datapoints, dtype=eq_agent.dtype)
 
                 gradients = tape.gradient(loss, eq_agent.parameters)
                 dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
 
-                # eq_agent.eq_scales.assign(tf.clip_by_value(eq_agent.eq_scales(), 0., 3.))
+                clip_tensor = tf.constant([[np.pi, 4, 1],
+                                           [np.pi, 4, 1]],
+                                          dtype=eq_agent.dtype)
+
+                eq_agent.eq_scales.assign(tf.minimum(eq_agent.eq_scales(), clip_tensor))
 
                 if tf.abs(loss - prev_loss) < tolerance:
                     print(f"Early convergence!")
@@ -265,9 +279,15 @@ def experiment(num_random_episodes,
         eq_agent.eq_scales.assign(best_eq_scales)
 
         evaluate_agent_dynamics(eq_agent, env, 1000, 1, seed=0)
+        print('\nEvaluating dynamics before optimisation')
         print(f'Length scales {eq_agent.eq_scales().numpy()}')
         print(f'Signal amplitude {eq_agent.eq_coeff().numpy()}')
         print(f'Noise amplitude {eq_agent.eq_noise_coeff().numpy()}')
+        evaluate_agent_dynamics(eq_agent,
+                                env,
+                                num_episodes=100,
+                                num_steps=1,
+                                seed=0)
 
         eq_agent.policy.reset()
 
@@ -282,8 +302,9 @@ def experiment(num_random_episodes,
                 loc = init_state
                 cov = init_cov
 
-                locs = []
-                covs = []
+                true_traj = []
+                locs = [loc[0].numpy()]
+                covs = [cov.numpy()]
 
                 step_costs = []
 
@@ -306,6 +327,8 @@ def experiment(num_random_episodes,
 
                         step_costs.append(step_cost)
 
+                    cost = cost / tf.cast(optimisation_horizon, dtype=eq_cost.dtype)
+
                 gradients = tape.gradient(cost, eq_agent.policy.parameters)
 
                 policy_optimiser.apply_gradients(zip(gradients, eq_agent.policy.parameters))
@@ -317,41 +340,40 @@ def experiment(num_random_episodes,
                 prev_loss = cost
 
                 print(tf.stack(step_costs, axis=0).numpy())
-                bar.set_description(f'Cost: {cost.numpy():.3f}')
 
-                #print(tf.stack(locs, axis=0))
+                env.reset()
+                env.env.env.state = init_state.numpy()[0]
+                true_traj.append(init_state.numpy()[0])
 
-        locs_all = np.stack(locs, axis=0)
-        vars_all = np.stack(covs, axis=0)[:, [0, 1], [0, 1]]
+                true_cost = 0.
 
-        steps = np.arange(locs_all.shape[0])
+                for step in range(num_steps_per_episode):
 
-        theta_means = locs_all[:, 0]
-        theta_stds = vars_all[:, 0] ** 0.5
-        thetadot_means = locs_all[:, 1]
-        thetadot_stds = vars_all[:, 1] ** 0.5
+                    action = eq_agent.act(state)
+                    state, action, next_state = env.step(action.numpy())
+                    true_cost = true_cost + eq_cost(tf.convert_to_tensor(next_state[None, :]))
 
-        plt.plot(steps, theta_means)
+                    true_traj.append(next_state)
 
-        plt.figure()
-        plt.plot(steps, theta_means)
-        plt.fill_between(steps,
-                         theta_means - theta_stds,
-                         theta_means + theta_stds)
-        plt.xlabel('step')
-        plt.ylabel('theta')
-        plt.savefig(f'../plots/{episode}-thetadot.png')
-        plt.close()
+                true_traj = np.stack(true_traj, axis=0)
 
-        plt.figure()
-        plt.plot(steps, thetadot_means)
-        plt.fill_between(steps,
-                         thetadot_means - thetadot_stds,
-                         thetadot_means + thetadot_stds)
-        plt.xlabel('step')
-        plt.ylabel('theta dot')
-        plt.savefig(f'../plots/{episode}-theta.png')
-        plt.close()
+                # Run rollout and plot
+                locs_all = np.stack(locs, axis=0)
+                vars_all = np.stack(covs, axis=0)[:, [0, 1], [0, 1]]
+                steps = np.arange(locs_all.shape[0])
+
+                plot_pendulum_rollouts(steps,
+                                       true_traj,
+                                       locs_all,
+                                       vars_all,
+                                       plot_path='../plots/',
+                                       plot_prefix=f'optim-{episode}-{n}')
+
+                true_cost = true_cost / num_steps_per_episode
+
+                bar.set_description(f'Cost: {cost.numpy():.5f} (pred) '
+                                    f'{true_cost.numpy():.5f} (true)')
+
 
         print(f'Performing episode {episode + 1}:')
         
@@ -371,5 +393,3 @@ def experiment(num_random_episodes,
         env.env.close()
 
         imageio.mimwrite(f'../gifs/pendulum-{episode}.gif', frames)
-
-
