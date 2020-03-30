@@ -2,7 +2,7 @@
 .idea
 venv-pilco
 pilco-venv
-plots/*
+#plots/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
