@@ -4,7 +4,7 @@ import numpy as np
 
 from pilco.environments import Environment
 from pilco.policies import RBFPolicy, TransformedPolicy
-from pilco.transforms import SineTransform, CosineTransform
+from pilco.transforms import SineTransform, CosineTransform, SineTransformWithPhase
 from pilco.costs import EQCost
 from pilco.agents import EQGPAgent
 
@@ -26,7 +26,6 @@ experiment = Experiment('pendulum-experiment')
 
 @experiment.config
 def config():
-
     # Lengthscale for gaussian cost
     target_scale = [[1.0, 8.0]]
 
@@ -64,40 +63,122 @@ def config():
     # Optimsation exit criterion tolerance
     tolerance = 1e-5
 
-        
-def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
 
+class PendulumAgent(EQGPAgent):
+
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 policy,
+                 cost,
+                 dtype=tf.float64,
+                 name='pendulum_agent',
+                 **kwargs):
+        super().__init__(in_state_dim=state_dim + 2,
+                         out_state_dim=state_dim,
+                         action_dim=action_dim,
+                         policy=policy,
+                         cost=cost,
+                         dtype=dtype,
+                         name=name,
+                         **kwargs)
+
+        self.trig_space_transform = SineTransformWithPhase(lower=-1,
+                                                           upper=1,
+                                                           phase=tf.constant([[0., np.pi / 2.]],
+                                                                             dtype=dtype))
+
+    def preprocess_observations(self, state, action, next_state):
+        state = self._validate_and_convert(state, last_dim=self.in_state_dim - 2)
+        action = self._validate_and_convert(action, last_dim=self.action_dim)
+        next_state = self._validate_and_convert(next_state, last_dim=self.out_state_dim)
+
+        delta_state = next_state - state
+
+        # Trig transform on the input state
+        trig_state = tf.stack([tf.sin(state[:, 0]),
+                               tf.cos(state[:, 0]),
+                               state[:, 0],
+                               state[:, 1]],
+                              axis=1)
+
+        return trig_state, action, delta_state
+
+    def match_moments(self, mean_full, cov_full):
+        mean_full = tf.reshape(mean_full, shape=(1, self.in_state_and_action_dim - 2))
+        cov_full = tf.reshape(cov_full, shape=(self.in_state_and_action_dim - 2,
+                                               self.in_state_and_action_dim - 2))
+
+        # Replicate the theta components in the loc and cov
+        mean_full_ = tf.concat([mean_full[:, :1], mean_full[:, :1], mean_full], axis=1)
+
+        rep_cov_theta_theta = tf.tile(cov_full[:1, :1], [3, 3])
+        rep_cov_theta_thetadot = tf.tile(cov_full[:1, 1:], [3, 1])
+        rep_cov_thetadot_theta = tf.tile(cov_full[1:, :1], [1, 3])
+
+        row_blocks = [
+            tf.concat([rep_cov_theta_theta, rep_cov_theta_thetadot], axis=1),
+            tf.concat([rep_cov_thetadot_theta, cov_full[1:, 1:]], axis=1)
+        ]
+
+        cov_full_ = tf.concat(row_blocks, axis=0)
+
+        mean_full_, cov_full_ = self.trig_space_transform.match_moments(loc=mean_full_[0],
+                                                                        cov=cov_full_,
+                                                                        indices=[0, 1])
+
+        mean, cov, cross_cov = super().match_delta_moments(mean_full_, cov_full_)
+
+        # Calcuate successor mean and covariance
+        mean = mean + mean_full[0, :self.out_state_dim]
+
+        cov = cov + cov_full[:self.out_state_dim, :self.out_state_dim]
+
+        cross_cov = cross_cov[2:, :]
+
+        cov = cov + cross_cov + tf.transpose(cross_cov)
+
+        return mean, cov
+
+    def gp_posterior_predictive(self, x_star):
+        x_star = self._validate_and_convert(x_star, self.in_state_and_action_dim - 2)
+
+        x_star_ = tf.concat([x_star[:, :1], x_star[:, :1], x_star], axis=1)
+
+        return super().gp_posterior_predictive(x_star_)
+
+
+def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
     test_data = sample_transitions_uniformly(env,
                                              num_episodes,
                                              num_steps,
                                              seed)
-    
+
     test_inputs, test_outputs = test_data
-    
+
     pred_means, pred_vars = agent.gp_posterior_predictive(test_inputs)
     pred_means = pred_means + test_inputs[:, :2]
-    
+
     sq_diff = tf.math.squared_difference(pred_means,
                                          test_outputs)
-    
+
     max_diff = tf.reduce_max(sq_diff ** 0.5, axis=0)
     min_diff = tf.reduce_min(sq_diff ** 0.5, axis=0)
-    
+
     rmse = tf.reduce_mean(sq_diff, axis=0) ** 0.5
     smse = tf.reduce_mean(sq_diff / pred_vars, axis=0)
-    
+
     rmse = [round(num, 3) for num in rmse.numpy()]
     smse = [round(num, 3) for num in smse.numpy()]
     max_diff = [round(num, 3) for num in max_diff.numpy()]
     min_diff = [round(num, 3) for num in min_diff.numpy()]
-    
+
     print(f'RMSE: {rmse} SMSE {smse} Min {min_diff} Max {max_diff}')
-    
+
 
 def sample_transitions_uniformly(env, num_episodes, num_steps, seed):
-    
     np.random.seed(seed)
-    
+
     state_actions = []
     next_states = []
 
@@ -109,18 +190,17 @@ def sample_transitions_uniformly(env, num_episodes, num_steps, seed):
         env.env.env.state = state
 
         for step in range(num_steps):
-
             action = tf.random.uniform(shape=()) * 4. - 2
             state, action, next_state = env.step(action[None].numpy())
-            
+
             state_action = np.concatenate([state, action], axis=0)
-            
+
             state_actions.append(state_action)
             next_states.append(next_state)
-            
+
     state_actions = np.stack(state_actions, axis=0)
     next_states = np.stack(next_states, axis=0)
-            
+
     return state_actions, next_states
 
 
@@ -139,7 +219,6 @@ def experiment(num_random_episodes,
                policy_lr,
                dynamics_lr,
                tolerance):
-    
     dtype = tf.float64
 
     # Create pendulum environment and reset
@@ -176,16 +255,16 @@ def experiment(num_random_episodes,
                                   transform=sine_transform)
 
     # Create agent
-    eq_agent = EQGPAgent(state_dim=2,
-                         action_dim=1,
-                         policy=eq_policy,
-                         cost=eq_cost,
-                         dtype=dtype)
+    eq_agent = PendulumAgent(state_dim=2,
+                             action_dim=1,
+                             policy=eq_policy,
+                             cost=eq_cost,
+                             dtype=dtype)
 
     eq_agent.policy.reset()
 
     for episode in trange(num_random_episodes):
-        
+
         state = env.reset()
         eq_agent.policy.reset()
 
@@ -195,8 +274,7 @@ def experiment(num_random_episodes,
         env.env.env.state = state
 
         for step in range(num_steps_per_random_episode):
-            
-            #action = (tf.random.uniform(shape=()) * 4. - 2)[None]
+            # action = (tf.random.uniform(shape=()) * 4. - 2)[None]
             action = eq_agent.policy(state)
             state, action, next_state = env.step(action.numpy())
 
@@ -239,7 +317,8 @@ def experiment(num_random_episodes,
                                                                                dtype=dtype,
                                                                                shape=best_eq_scales.shape))
             eq_agent.eq_coeff.assign(tf.random.uniform(minval=5e-1, maxval=2e0, shape=best_eq_coeff.shape, dtype=dtype))
-            eq_agent.eq_noise_coeff.assign(tf.random.uniform(minval=5e-2, maxval=2e-1, shape=best_eq_noise_coeff.shape, dtype=dtype))
+            eq_agent.eq_noise_coeff.assign(
+                tf.random.uniform(minval=5e-2, maxval=2e-1, shape=best_eq_noise_coeff.shape, dtype=dtype))
 
             for n in trange(num_dynamics_optim_steps):
 
@@ -252,11 +331,19 @@ def experiment(num_random_episodes,
                 gradients = tape.gradient(loss, eq_agent.parameters)
                 dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
 
-                clip_tensor = tf.constant([[np.pi, 4, 1],
-                                           [np.pi, 4, 1]],
+                clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
+                                           [2, 2, np.pi, 4, 1]],
                                           dtype=eq_agent.dtype)
 
-                eq_agent.eq_scales.assign(tf.minimum(eq_agent.eq_scales(), clip_tensor))
+                clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
+
+                #TODO: Delete this ugly hack, burn it with fire
+                clip_tensor = tf.constant([[0, 0, 100, 0, 0],
+                                           [0, 0, 100, 0, 0]],
+                                          dtype=eq_agent.dtype)
+                clipped_eq_scales = tf.maximum(clipped_eq_scales, clip_tensor)
+
+                eq_agent.eq_scales.assign(clipped_eq_scales)
 
                 if tf.abs(loss - prev_loss) < tolerance:
                     print(f"Early convergence!")
@@ -313,7 +400,6 @@ def experiment(num_random_episodes,
                     tape.watch(eq_agent.policy.parameters)
 
                     for t in range(current_optimisation_horizon):
-
                         mean_full, cov_full = eq_agent.policy.match_moments(loc, cov)
 
                         loc, cov = eq_agent.match_moments(mean_full, cov_full)
@@ -336,7 +422,7 @@ def experiment(num_random_episodes,
                 if tf.abs(cost - prev_loss) < tolerance:
                     print(f"Early convergence!")
                     break
-                    
+
                 prev_loss = cost
 
                 print(tf.stack(step_costs, axis=0).numpy())
@@ -348,7 +434,6 @@ def experiment(num_random_episodes,
                 true_cost = 0.
 
                 for step in range(num_steps_per_episode):
-
                     action = eq_agent.act(state)
                     state, action, next_state = env.step(action.numpy())
                     true_cost = true_cost + eq_cost(tf.convert_to_tensor(next_state[None, :]))
@@ -374,16 +459,14 @@ def experiment(num_random_episodes,
                 bar.set_description(f'Cost: {cost.numpy():.5f} (pred) '
                                     f'{true_cost.numpy():.5f} (true)')
 
-
         print(f'Performing episode {episode + 1}:')
-        
+
         env.reset()
         env.env.env.state = init_state.numpy()[0]
 
         frames = []
-        
+
         for step in trange(num_steps_per_episode):
-            
             frames.append(env.env.render(mode='rgb_array'))
 
             action = eq_agent.act(state)

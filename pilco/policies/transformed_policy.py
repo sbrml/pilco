@@ -36,8 +36,8 @@ class TransformedPolicy(Policy):
         # We first match the moments through the base policy
         loc, cov = self.policy.match_moments(state_loc, state_cov)
         loc, cov = self.transform.match_moments(loc=loc,
-                                                cov=cov,
-                                                indices=self.action_indices)
+                                                      cov=cov,
+                                                      indices=self.action_indices)
 
         return loc, cov
 

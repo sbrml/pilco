@@ -21,7 +21,8 @@ class AgentError(Exception):
 class Agent(tf.keras.Model, ABC):
 
     def __init__(self,
-                 state_dim,
+                 in_state_dim,
+                 out_state_dim,
                  action_dim,
                  policy,
                  cost,
@@ -36,9 +37,9 @@ class Agent(tf.keras.Model, ABC):
             f'found {dtype} and {policy.dtype}'
 
         # Set state and action dimensions
-        self.state_dim = state_dim
+        self.in_state_dim = in_state_dim
+        self.out_state_dim = out_state_dim
         self.action_dim = action_dim
-        self.state_action_dim = state_dim + action_dim
 
         # Set instantiated policy
         if not issubclass(policy.__class__, Policy):
@@ -51,51 +52,49 @@ class Agent(tf.keras.Model, ABC):
         self.cost = cost
 
         # Initialise variables to hold observed dynamics data
-        inputs_init = tf.zeros((0, state_dim + action_dim), dtype=dtype)
+        inputs_init = tf.zeros((0, self.in_state_and_action_dim), dtype=dtype)
         self._dynamics_inputs = tf.Variable(inputs_init,
-                                            shape=(None, state_dim + action_dim),
+                                            shape=(None, self.in_state_and_action_dim),
                                             dtype=dtype,
                                             name='dynamics_inputs')
 
-        outputs_init = tf.zeros((0, state_dim), dtype=dtype)
+        outputs_init = tf.zeros((0, self.out_state_dim), dtype=dtype)
         self._dynamics_outputs = tf.Variable(outputs_init,
-                                             shape=(None, state_dim),
+                                             shape=(None, self.out_state_dim),
                                              dtype=dtype,
                                              name='dynamics_outputs')
 
-        # We will store the data statistics in these variables so that they can be easily
-        # transformed back and forth
-        self.inputs_mean = tf.Variable(tf.zeros((1, state_dim + action_dim), dtype=dtype),
-                                       dtype=dtype,
-                                       name="inputs_mean")
-        self.inputs_std = tf.Variable(tf.ones((1, state_dim + action_dim), dtype=dtype),
-                                      dtype=dtype,
-                                      name="inputs_std")
-
-        self.outputs_mean = tf.Variable(tf.zeros((1, state_dim), dtype=dtype),
-                                        dtype=dtype,
-                                        name="outputs_mean")
-        self.outputs_std = tf.Variable(tf.ones((1, state_dim), dtype=dtype),
-                                       dtype=dtype,
-                                       name="outputs_std")
+    @property
+    def in_state_and_action_dim(self):
+        return self.in_state_dim + self.action_dim
 
     @property
     def dynamics_inputs(self):
-        return self._dynamics_inputs  # (self._dynamics_inputs - self.inputs_mean) / self.inputs_std
+        return self._dynamics_inputs
 
     @property
     def dynamics_outputs(self):
-        return self._dynamics_outputs  # (self._dynamics_outputs - self.outputs_mean) / self.outputs_std
+        return self._dynamics_outputs
 
     def act(self, state):
         return self.policy(state)
 
-    def observe(self, state, action, next_state, eps=1e-10):
+    def preprocess_observations(self, state, action, next_state):
 
         # Convert state, action and next state to tensors with correct dtype
-        state = self._validate_and_convert(state, last_dim=self.state_dim)
+        state = self._validate_and_convert(state, last_dim=self.in_state_dim)
         action = self._validate_and_convert(action, last_dim=self.action_dim)
-        next_state = self._validate_and_convert(next_state, last_dim=self.state_dim)
+        next_state = self._validate_and_convert(next_state, last_dim=self.out_state_dim)
+
+        delta_state = next_state - state
+
+        return state, action, delta_state
+
+    def observe(self, state, action, next_state, eps=1e-10):
+
+        state, action, delta_state = self.preprocess_observations(state,
+                                                                  action,
+                                                                  next_state)
 
         # Add observed state and action to the training data
         observed_input = tf.concat([state, action], axis=-1)
@@ -104,33 +103,35 @@ class Agent(tf.keras.Model, ABC):
         self._dynamics_inputs.assign(observed_inputs)
 
         # Add observed next state to the training data
-        delta_state = next_state - state
         observed_outputs = tf.concat([self._dynamics_outputs, delta_state],
                                      axis=0)
         self._dynamics_outputs.assign(observed_outputs)
-
-        # Update the observations means and standard deviations
-        mean, variance = tf.nn.moments(self._dynamics_inputs, axes=[0], keepdims=True)
-        variance = tf.maximum(variance, eps)
-        std = tf.math.sqrt(variance)
-
-        self.inputs_mean.assign(mean)
-        self.inputs_std.assign(std)
-
-        mean, variance = tf.nn.moments(self._dynamics_outputs, axes=[0], keepdims=True)
-        variance = tf.maximum(variance, eps)
-        std = tf.math.sqrt(variance)
-
-        self.outputs_mean.assign(mean)
-        self.outputs_std.assign(std)
 
     @abstractmethod
     def train_dynamics_model(self, **kwargs):
         pass
 
     @abstractmethod
-    def match_moments(self, mu_su, cov_su):
+    def match_delta_moments(self, mean_full, cov_full):
         pass
+
+    def match_moments(self, mean_full, cov_full):
+
+        # Reshape mean and covariance
+        mean_full = tf.reshape(mean_full, shape=(1, self.in_state_and_action_dim))
+        cov_full = tf.reshape(cov_full, shape=(self.in_state_and_action_dim,
+                                               self.in_state_and_action_dim))
+
+        mean, cov, cross_cov_s = self.match_delta_moments(mean_full, cov_full)
+
+        # Calcuate successor mean and covariance
+        mean = mean + mean_full[0, :self.in_state_dim]
+
+        cov = cov + cov_full[:self.in_state_dim, :self.in_state_dim]
+
+        cov = cov + cross_cov_s + tf.transpose(cross_cov_s)
+
+        return mean, cov
 
     def _validate_and_convert(self, xs, last_dim):
         """
@@ -148,15 +149,17 @@ class Agent(tf.keras.Model, ABC):
 class EQGPAgent(Agent):
 
     def __init__(self,
-                 state_dim,
+                 in_state_dim,
+                 out_state_dim,
                  action_dim,
                  policy,
                  cost,
                  dtype,
-                 name='agent',
+                 name='eq_agent',
                  **kwargs):
 
-        super().__init__(state_dim=state_dim,
+        super().__init__(in_state_dim=in_state_dim,
+                         out_state_dim=out_state_dim,
                          action_dim=action_dim,
                          policy=policy,
                          cost=cost,
@@ -165,14 +168,14 @@ class EQGPAgent(Agent):
                          **kwargs)
 
         # Set EQ covariance parameters: coefficient, scales and noise level
-        eq_coeff_init = tf.ones((state_dim,), dtype=dtype)
+        eq_coeff_init = tf.ones((self.out_state_dim,), dtype=dtype)
         self.eq_coeff = BoundedVariable(eq_coeff_init,
                                         lower=1e-4,
                                         upper=1e2,
                                         name='eq_coeff',
                                         dtype=dtype)
 
-        eq_scales_init = 1e0 * tf.ones((state_dim, state_dim + action_dim),
+        eq_scales_init = 1e0 * tf.ones((self.out_state_dim, self.in_state_and_action_dim),
                                        dtype=dtype)
 
         self.eq_scales = BoundedVariable(eq_scales_init,
@@ -181,13 +184,12 @@ class EQGPAgent(Agent):
                                          name='eq_scales',
                                          dtype=dtype)
 
-        eq_noise_coeff_init = 1e-2 * tf.ones((state_dim,), dtype=dtype)
+        eq_noise_coeff_init = 1e-2 * tf.ones((self.out_state_dim,), dtype=dtype)
         self.eq_noise_coeff = BoundedVariable(eq_noise_coeff_init,
                                               lower=1e-3,
                                               upper=1e1,
                                               name='eq_noise_coeff',
                                               dtype=dtype)
-
 
     def set_eq_scales_from_data(self):
 
@@ -198,22 +200,21 @@ class EQGPAgent(Agent):
 
         median = tfp.stats.percentile(norms, 50.0)
 
-        eq_scales_init = median * tf.ones((self.state_dim, self.state_action_dim),
+        eq_scales_init = median * tf.ones((self.out_state_dim, self.in_state_and_action_dim),
                                           dtype=self.dtype)
 
         self.eq_scales.assign(eq_scales_init)
-        
 
     @property
     def parameters(self):
         return self.eq_coeff.var, self.eq_scales.var, self.eq_noise_coeff.var
 
-    def match_moments(self, mean_full, cov_full):
+    def match_delta_moments(self, mean_full, cov_full):
 
         # Reshape mean and covariance
-        mean_full = tf.reshape(mean_full, shape=(1, self.state_action_dim))
-        cov_full = tf.reshape(cov_full, shape=(self.state_action_dim,
-                                               self.state_action_dim))
+        mean_full = tf.reshape(mean_full, shape=(1, self.in_state_and_action_dim))
+        cov_full = tf.reshape(cov_full, shape=(self.in_state_and_action_dim,
+                                               self.in_state_and_action_dim))
 
         # ----------------------------------------------------------------------
         # Compute mean
@@ -244,7 +245,7 @@ class EQGPAgent(Agent):
                               nu,
                               tf.linalg.solve(cov_full_plus_scales,
                                               tf.tile(tf.transpose(nu)[None, :, :],
-                                                      (self.state_dim, 1, 1))))
+                                                      (self.out_state_dim, 1, 1))))
 
         mean_exp_quad = tf.math.exp(-0.5 * mean_quad)
 
@@ -258,60 +259,63 @@ class EQGPAgent(Agent):
 
         # Calculate denominator for EQ coefficient
 
-        # S x S x D x D
+        # G x G x D x D
         eq_scales_cross_sum = eq_scales_inv[None, :, :, :] + eq_scales_inv[:, None, :, :]
 
-        # S x S x D x D
+        # G x G x D x D
         R = tf.einsum('ij, abjk -> abik',
                       cov_full,
                       eq_scales_cross_sum)
 
-        # S x S x D x D
-        R = R + tf.eye(self.state_action_dim, dtype=self.dtype)[None, None, :, :]
+        # G x G x D x D
+        R = R + tf.eye(self.in_state_and_action_dim, dtype=self.dtype)[None, None, :, :]
 
-        # S x S
         # R_det_inv_sqrt = tf.linalg.det(R) ** -0.5
-        reshaped_R = tf.reshape(R, [-1, self.state_action_dim, self.state_action_dim])
+        # (G x G) x D x D
+        reshaped_R = tf.reshape(R, [-1, self.in_state_and_action_dim, self.in_state_and_action_dim])
 
         # Ignore sign, because R will always be positive definite
+        # (G x G)
         _, log_R_det = tf.linalg.slogdet(reshaped_R)
+
+        # G x G
         log_R_det_inv_sqrt = -0.5 * tf.reshape(log_R_det,
-                                               [self.state_dim, self.state_dim])
+                                               [self.out_state_dim, self.out_state_dim])
 
         # Calculate numerator for EQ coeffieicent
 
-        # S x 1 x N
+        # G x 1 x N
         log_k_data_mu = self.exponentiated_quadratic(mean_full,
                                                      self.dynamics_inputs,
                                                      log=True)
 
-        # S x S x N x N
+        # G x G x N x N
         log_k_ab = log_k_data_mu[None, :, :, :] + log_k_data_mu[:, :, :, None]
 
         # Calculate exponentiated quadratic
 
-        # S x N x D
+        # G x N x D
         eq_scale_times_nu = tf.einsum('sij, nj -> sni',
                                       eq_scales_inv,
                                       nu)
 
-        # S x S x N x N x D
+        # G x G x N x N x D
         z = eq_scale_times_nu[:, None, :, None, :] + eq_scale_times_nu[None, :, None, :, :]
 
-        # S x S x N x N x D
+        # G x G x N x N x D
         cov_full_times_z = tf.einsum('ij, abnmj -> abnmi',
                                      cov_full,
                                      z)
 
-        # S x S x N x N x D x D
+        # G x G x N x N x D x D
         R_tiled = tf.tile(R[:, :, None, None, :, :],
                           [1, 1, self.num_datapoints, self.num_datapoints, 1, 1])
 
-        # S x S x N x N x D
+        # G x G x N x N x D
         R_inv_cov_full_z = tf.linalg.solve(R_tiled,
                                            cov_full_times_z[:, :, :, :, :, None])[:, :, :, :, :, 0]
 
-        # S x S x N x N
+        # G x G x N x N
         cov_quad = tf.einsum('abnmi, abnmi -> abnm',
                              z,
                              R_inv_cov_full_z)
@@ -319,30 +323,30 @@ class EQGPAgent(Agent):
 
         # Put coefficient and EQ together
 
-        # S x S x N x N
+        # G x G x N x N
         log_Q = log_k_ab + cov_quad + log_R_det_inv_sqrt[:, :, None, None]
         Q = tf.math.exp(log_Q)
 
         # Calculate diagonal covariance terms
 
         # Select diagonal entries of Q
-        Q_diag_indices = tf.tile(tf.range(self.state_dim)[:, None], [1, 2])
+        Q_diag_indices = tf.tile(tf.range(self.out_state_dim)[:, None], [1, 2])
 
-        # S x N x N
+        # G x N x N
         Q_diag = tf.gather_nd(Q, Q_diag_indices)
 
-        # S x N x N
+        # G x N x N
         data_cov_inv_times_Q_diag = tf.linalg.solve(self.data_covariance, Q_diag)
 
-        # S
+        # G
         expected_var = tf.linalg.trace(data_cov_inv_times_Q_diag)
         expected_var = self.eq_coeff() - expected_var
 
         # Calculate general covariance terms
-        # S x N
+        # G x N
         beta = self.beta
 
-        # S x S
+        # G x G
         cov = tf.einsum('ai, bj, abij -> ab',
                         beta,
                         beta,
@@ -356,10 +360,10 @@ class EQGPAgent(Agent):
 
         # Compute Cov[x, Δ]
         mean_full_tiled = tf.tile(tf.transpose(mean_full)[None, :, :],
-                                  (self.state_dim, 1, 1))
+                                  (self.out_state_dim, 1, 1))
 
         dynamics_inputs_tiled = tf.tile(tf.transpose(self.dynamics_inputs)[None, :, :],
-                                        (self.state_dim, 1, 1))
+                                        (self.out_state_dim, 1, 1))
 
         # A = cov_full + scales
         # G x D x 1
@@ -385,18 +389,11 @@ class EQGPAgent(Agent):
                               beta)
 
         # S x G
-        cross_cov_s = cross_cov[:self.state_dim, :]
-        cross_cov_mean_prod = tf.transpose(mean_full[:, :self.state_dim]) * mean[None, :]
+        cross_cov_s = cross_cov[:self.in_state_dim, :]
+        cross_cov_mean_prod = tf.transpose(mean_full[:, :self.in_state_dim]) * mean[None, :]
         cross_cov_s = cross_cov_s - cross_cov_mean_prod
 
-        # Calcuate successor mean and covariance
-        mean = mean + mean_full[0, :self.state_dim]
-
-        cov = cov + cov_full[:self.state_dim, :self.state_dim]
-
-        cov = cov + cross_cov_s + tf.transpose(cross_cov_s)
-
-        return mean, cov
+        return mean, cov, cross_cov_s
 
     @property
     def num_datapoints(self):
@@ -425,7 +422,7 @@ class EQGPAgent(Agent):
                                          dynamics_inputs)
 
         noise = self.eq_noise_coeff()[:, None, None] * tf.eye(K.shape[-1],
-                                                            dtype=self.dtype)[None, :, :]
+                                                              dtype=self.dtype)[None, :, :]
 
         return K + noise
 
@@ -457,7 +454,7 @@ class EQGPAgent(Agent):
         x_star - K x D tensor of K inputs of dimensionality D
         """
 
-        x_star = self._validate_and_convert(x_star, self.state_action_dim)
+        x_star = self._validate_and_convert(x_star, self.in_state_and_action_dim)
 
         # S x N x K
         k_star = self.exponentiated_quadratic(self.dynamics_inputs,
@@ -491,11 +488,11 @@ class EQGPAgent(Agent):
 
     def dynamics_log_marginal(self):
 
-        #return tf.reduce_sum(x) + tf.reduce_sum(y) + tf.reduce_sum(z)
+        # return tf.reduce_sum(x) + tf.reduce_sum(y) + tf.reduce_sum(z)
 
         # S x N x N
         cov = self.data_covariance
-        log_normalizing_const = -self.state_action_dim * 0.5 * tf.math.log(2 * np.pi)
+        log_normalizing_const = -self.in_state_and_action_dim * 0.5 * tf.math.log(2 * np.pi)
         log_normalizing_const = tf.cast(log_normalizing_const, self.dtype)
 
         # S
@@ -512,10 +509,9 @@ class EQGPAgent(Agent):
 
         return log_normalizing_const + quad
 
-
     def get_cost(self, state_loc, state_cov, horizon):
 
-        self.policy.match_moments()
+        self.policy.match_delta_moments()
 
     def optimize_policy(self):
         pass

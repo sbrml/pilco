@@ -57,6 +57,21 @@ class IdentityTransform(MomentMatchingTransform):
         return loc, cov
 
 
+class ReplicationTransform(MomentMatchingTransform):
+
+    def __init__(self,
+                 dtype=tf.float64,
+                 name="replication_transform",
+                 **kwargs):
+
+        super().__init__(dtype=dtype,
+                         name=name,
+                         **kwargs)
+
+    def match_moments(self, loc, cov, indices):
+        pass
+
+
 class SineTransformWithPhase(MomentMatchingTransform):
 
     def __init__(self,
@@ -87,11 +102,18 @@ class SineTransformWithPhase(MomentMatchingTransform):
     def match_moments(self, loc, cov, indices):
         """
 
-        :param loc: K x 1 vector
+        :param loc: K vector
         :param cov: K x K vector
         :param indices: integer list specifying the slices
         :return:
         """
+
+        # t, td ~ m1 m2, [[s11, s12],
+        #                 [s21, s22]]
+        #
+        # t, t, td ~ m1 m1 m2 [[s11, s11, s12],
+        #                       [s11, s11, s12],
+        #                       [s21, s21, s22]]
 
         # Convert inputs
         loc = tf.convert_to_tensor(loc)
