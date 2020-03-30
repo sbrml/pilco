@@ -27,6 +27,7 @@ class Agent(tf.keras.Model, ABC):
                  policy,
                  cost,
                  dtype,
+                 replay_buffer_limit=None,
                  name='agent',
                  **kwargs):
 
@@ -40,6 +41,8 @@ class Agent(tf.keras.Model, ABC):
         self.in_state_dim = in_state_dim
         self.out_state_dim = out_state_dim
         self.action_dim = action_dim
+
+        self.replay_buffer_limit = replay_buffer_limit
 
         # Set instantiated policy
         if not issubclass(policy.__class__, Policy):
@@ -100,11 +103,17 @@ class Agent(tf.keras.Model, ABC):
         observed_input = tf.concat([state, action], axis=-1)
         observed_inputs = tf.concat([self._dynamics_inputs, observed_input],
                                     axis=0)
+
+        if self.replay_buffer_limit is not None:
+            observed_inputs = observed_inputs[-self.replay_buffer_limit:, :]
         self._dynamics_inputs.assign(observed_inputs)
 
         # Add observed next state to the training data
         observed_outputs = tf.concat([self._dynamics_outputs, delta_state],
                                      axis=0)
+
+        if self.replay_buffer_limit is not None:
+            observed_outputs = observed_outputs[-self.replay_buffer_limit:, :]
         self._dynamics_outputs.assign(observed_outputs)
 
     @abstractmethod
@@ -155,6 +164,7 @@ class EQGPAgent(Agent):
                  policy,
                  cost,
                  dtype,
+                 replay_buffer_limit=None,
                  name='eq_agent',
                  **kwargs):
 
@@ -164,6 +174,7 @@ class EQGPAgent(Agent):
                          policy=policy,
                          cost=cost,
                          dtype=dtype,
+                         replay_buffer_limit=replay_buffer_limit,
                          name=name,
                          **kwargs)
 

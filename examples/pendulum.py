@@ -39,17 +39,17 @@ def config():
     num_random_episodes = 2
 
     # Number of steps per random episode
-    num_steps_per_random_episode = 30
+    num_steps_per_random_episode = 40
 
     # Parameters for agent-environment loops
-    optimisation_horizon = 50
+    optimisation_horizon = 40
     num_optim_steps = 100
 
     num_episodes = 10
-    num_steps_per_episode = 50
+    num_steps_per_episode = 40
 
     # Number of optimisation steps for dynamics GPs
-    num_dynamics_optim_steps = 50
+    num_dynamics_optim_steps = 30
 
     # Policy learn rate
     policy_lr = 5e-2
@@ -61,7 +61,7 @@ def config():
     dynamics_optimisation_restarts = 3
 
     # Optimsation exit criterion tolerance
-    tolerance = 1e-5
+    tolerance = 1e-4
 
 
 class PendulumAgent(EQGPAgent):
@@ -259,6 +259,7 @@ def experiment(num_random_episodes,
                              action_dim=1,
                              policy=eq_policy,
                              cost=eq_cost,
+                             replay_buffer_limit=160,
                              dtype=dtype)
 
     eq_agent.policy.reset()
@@ -288,6 +289,7 @@ def experiment(num_random_episodes,
 
     for episode in range(num_episodes):
 
+        print(eq_agent.num_datapoints)
         print('\nEvaluating dynamics before optimisation')
         print(f'Length scales {eq_agent.eq_scales().numpy()}')
         print(f'Signal amplitude {eq_agent.eq_coeff().numpy()}')
@@ -300,70 +302,80 @@ def experiment(num_random_episodes,
 
         print('Optimising dynamics')
 
-        # Create variables
-        best_eq_scales = eq_agent.eq_scales()
-        best_eq_coeff = eq_agent.eq_coeff()
-        best_eq_noise_coeff = eq_agent.eq_noise_coeff()
+        if episode > 1:
+            # Create variables
+            best_eq_scales = eq_agent.eq_scales()
+            best_eq_coeff = eq_agent.eq_coeff()
+            best_eq_noise_coeff = eq_agent.eq_noise_coeff()
 
-        best_loss = np.inf
+            best_loss = np.inf
 
-        for idx in range(dynamics_optimisation_restarts):
+            for idx in range(dynamics_optimisation_restarts):
 
-            prev_loss = np.inf
+                prev_loss = np.inf
 
-            # Randomly initialize dynamics hyperparameters
+                # Randomly initialize dynamics hyperparameters
+                eq_agent.set_eq_scales_from_data()
+                eq_agent.eq_scales.assign(eq_agent.eq_scales() + tf.random.uniform(minval=-0.05, maxval=1.05,
+                                                                                   dtype=dtype,
+                                                                                   shape=best_eq_scales.shape))
+                eq_agent.eq_coeff.assign(tf.random.uniform(minval=5e-1, maxval=2e0, shape=best_eq_coeff.shape, dtype=dtype))
+                eq_agent.eq_noise_coeff.assign(
+                    tf.random.uniform(minval=5e-2, maxval=2e-1, shape=best_eq_noise_coeff.shape, dtype=dtype))
+
+                for n in trange(num_dynamics_optim_steps):
+
+                    with tf.GradientTape(watch_accessed_variables=False) as tape:
+                        tape.watch(eq_agent.parameters)
+
+                        loss = -eq_agent.dynamics_log_marginal()
+                        loss = loss / tf.cast(eq_agent.num_datapoints, dtype=eq_agent.dtype)
+
+                    gradients = tape.gradient(loss, eq_agent.parameters)
+                    dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
+
+                    clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
+                                               [2, 2, np.pi, 4, 1]],
+                                              dtype=eq_agent.dtype)
+
+                    clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
+
+                    #TODO: Delete this ugly hack, burn it with fire
+                    clip_tensor = tf.constant([[0, 0, 100, 0, 0],
+                                               [0, 0, 100, 0, 0]],
+                                              dtype=eq_agent.dtype)
+                    clipped_eq_scales = tf.maximum(clipped_eq_scales, clip_tensor)
+
+                    eq_agent.eq_scales.assign(clipped_eq_scales)
+
+                    if tf.abs(loss - prev_loss) < tolerance:
+                        print(f"Early convergence!")
+                        break
+
+                    prev_loss = loss
+
+                print(f"Optimization round {idx + 1}/{dynamics_optimisation_restarts}, loss: {loss:.4f}")
+
+                if loss < best_loss:
+                    best_loss = loss
+
+                    best_eq_scales = eq_agent.eq_scales()
+                    best_eq_coeff = eq_agent.eq_coeff()
+                    best_eq_noise_coeff = eq_agent.eq_noise_coeff()
+
+            # Assign best parameters
+            eq_agent.eq_coeff.assign(best_eq_coeff)
+            eq_agent.eq_noise_coeff.assign(best_eq_noise_coeff)
+            eq_agent.eq_scales.assign(best_eq_scales)
+
+        else:
             eq_agent.set_eq_scales_from_data()
-            eq_agent.eq_scales.assign(eq_agent.eq_scales() + tf.random.uniform(minval=-0.05, maxval=1.05,
-                                                                               dtype=dtype,
-                                                                               shape=best_eq_scales.shape))
-            eq_agent.eq_coeff.assign(tf.random.uniform(minval=5e-1, maxval=2e0, shape=best_eq_coeff.shape, dtype=dtype))
-            eq_agent.eq_noise_coeff.assign(
-                tf.random.uniform(minval=5e-2, maxval=2e-1, shape=best_eq_noise_coeff.shape, dtype=dtype))
-
-            for n in trange(num_dynamics_optim_steps):
-
-                with tf.GradientTape(watch_accessed_variables=False) as tape:
-                    tape.watch(eq_agent.parameters)
-
-                    loss = -eq_agent.dynamics_log_marginal()
-                    loss = loss / tf.cast(eq_agent.num_datapoints, dtype=eq_agent.dtype)
-
-                gradients = tape.gradient(loss, eq_agent.parameters)
-                dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
-
-                clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
-                                           [2, 2, np.pi, 4, 1]],
-                                          dtype=eq_agent.dtype)
-
-                clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
-
-                #TODO: Delete this ugly hack, burn it with fire
-                clip_tensor = tf.constant([[0, 0, 100, 0, 0],
-                                           [0, 0, 100, 0, 0]],
-                                          dtype=eq_agent.dtype)
-                clipped_eq_scales = tf.maximum(clipped_eq_scales, clip_tensor)
-
-                eq_agent.eq_scales.assign(clipped_eq_scales)
-
-                if tf.abs(loss - prev_loss) < tolerance:
-                    print(f"Early convergence!")
-                    break
-
-                prev_loss = loss
-
-            print(f"Optimization round {idx + 1}/{dynamics_optimisation_restarts}, loss: {loss:.4f}")
-
-            if loss < best_loss:
-                best_loss = loss
-
-                best_eq_scales = eq_agent.eq_scales()
-                best_eq_coeff = eq_agent.eq_coeff()
-                best_eq_noise_coeff = eq_agent.eq_noise_coeff()
-
-        # Assign best parameters
-        eq_agent.eq_coeff.assign(best_eq_coeff)
-        eq_agent.eq_noise_coeff.assign(best_eq_noise_coeff)
-        eq_agent.eq_scales.assign(best_eq_scales)
+            # TODO: Delete this ugly hack, burn it with fire
+            clip_tensor = tf.constant([[0, 0, 100, 0, 0],
+                                       [0, 0, 100, 0, 0]],
+                                      dtype=eq_agent.dtype)
+            clipped_eq_scales = tf.maximum(eq_agent.eq_scales(), clip_tensor)
+            eq_agent.eq_scales.assign(clipped_eq_scales)
 
         evaluate_agent_dynamics(eq_agent, env, 1000, 1, seed=0)
         print('\nEvaluating dynamics before optimisation')
