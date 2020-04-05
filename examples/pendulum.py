@@ -4,7 +4,7 @@ import numpy as np
 
 from pilco.environments import Environment
 from pilco.policies import RBFPolicy, TransformedPolicy
-from pilco.transforms import SineTransform, CosineTransform, SineTransformWithPhase
+from pilco.transforms import SineTransform, CosineTransform, SineTransformWithPhase, AbsoluteValueTransform
 from pilco.costs import EQCost
 from pilco.agents import EQGPAgent
 
@@ -27,28 +27,28 @@ experiment = Experiment('pendulum-experiment')
 @experiment.config
 def config():
     # Lengthscale for gaussian cost
-    target_scale = [[0.5, 40.0]]
+    target_scale = [[0.5]]
 
-    agent_replay_buffer_limit = 210
+    agent_replay_buffer_limit = 100000
 
     # Number of rbf features in policy
     num_rbf_features = 50
 
     # Subsampling factor
-    sub_sampling_factor = 2
+    sub_sampling_factor = 4
 
     # Number of episodes of random sampling of data
     num_random_episodes = 2
 
     # Number of steps per random episode
-    num_steps_per_random_episode = 70
+    num_steps_per_random_episode = 30
 
     # Parameters for agent-environment loops
-    optimisation_horizon = 70
-    num_optim_steps = 50
+    optimisation_horizon = 40
+    num_optim_steps = 100
 
     num_episodes = 10
-    num_steps_per_episode = 70
+    num_steps_per_episode = 40
 
     # Number of optimisation steps for dynamics GPs
     num_dynamics_optim_steps = 30
@@ -230,7 +230,8 @@ def experiment(num_random_episodes,
     env.reset()
 
     # Create stuff for our controller
-    target_loc = tf.constant([[1., 0.]], dtype=dtype)
+    target_loc = tf.constant([[0.]], dtype=dtype)
+    target_scale = tf.constant(target_scale, dtype=dtype)
 
     cost_transform = CosineTransform(lower=-1.,
                                      upper=1.,
@@ -238,9 +239,8 @@ def experiment(num_random_episodes,
 
     eq_cost = EQCost(target_loc=target_loc,
                      target_scale=target_scale,
-                     target_dim=2,
+                     target_dim=1,
                      transform=cost_transform,
-                     indices=[0],
                      dtype=dtype)
 
     # Create EQ policy
@@ -253,6 +253,11 @@ def experiment(num_random_episodes,
     # Shifted and scaled sine function.
     sine_transform = SineTransform(lower=-2,
                                    upper=2)
+
+    fucking_work_already = SineTransform(lower=-1,
+                                         upper=1)
+
+    abs_transform = AbsoluteValueTransform()
 
     eq_policy = TransformedPolicy(policy=eq_policy,
                                   transform=sine_transform)
@@ -348,8 +353,8 @@ def experiment(num_random_episodes,
 
                     clipped_eq_scales = eq_agent.eq_scales()
                     #TODO: Delete this ugly hack, burn it with fire
-                    clip_tensor = tf.constant([[0, 0, 000, 0, 0],
-                                               [0, 0, 000, 0, 0]],
+                    clip_tensor = tf.constant([[0, 0, 100, 0, 0],
+                                               [0, 0, 100, 0, 0]],
                                               dtype=eq_agent.dtype)
                     clipped_eq_scales = tf.maximum(clipped_eq_scales, clip_tensor)
 
@@ -378,8 +383,8 @@ def experiment(num_random_episodes,
         else:
             eq_agent.set_eq_scales_from_data()
             # TODO: Delete this ugly hack, burn it with fire
-            clip_tensor = tf.constant([[0, 0, 00, 0, 0],
-                                       [0, 0, 00, 0, 0]],
+            clip_tensor = tf.constant([[0, 0, 100, 0, 0],
+                                       [0, 0, 100, 0, 0]],
                                       dtype=eq_agent.dtype)
             clipped_eq_scales = tf.maximum(eq_agent.eq_scales(), clip_tensor)
             eq_agent.eq_scales.assign(clipped_eq_scales)
@@ -426,7 +431,21 @@ def experiment(num_random_episodes,
                         locs.append(loc.numpy())
                         covs.append(cov.numpy())
 
-                        step_cost = eq_agent.cost.expected_cost(loc[None, :], cov)
+                        # Moment match by 1/2
+                        loc_ = 0.5 * loc[:1]
+                        cov_ = 0.25 * cov[:1, :1]
+
+                        # Moment match by sine
+                        loc_, cov_ = fucking_work_already.match_moments(loc_, cov_, indices=tf.constant([0]))
+
+                        # Moment match by absolute value
+                        loc_, cov_ = abs_transform.match_moments(loc_, cov_, indices=tf.constant([0]))
+
+                        # Moment match by 2
+                        loc_ = 2 * loc_
+                        cov_ = 4 * cov_
+
+                        step_cost = eq_agent.cost.expected_cost(loc_, cov_)
 
                         cost = cost + step_cost
 
@@ -455,7 +474,7 @@ def experiment(num_random_episodes,
                 for step in range(num_steps_per_episode):
                     action = eq_agent.act(state)
                     state, action, next_state = env.step(action.numpy())
-                    true_cost = true_cost + eq_cost(tf.convert_to_tensor(next_state[None, :]))
+                    true_cost = true_cost + eq_cost(tf.convert_to_tensor(2 * tf.abs(tf.sin(next_state[None, :1] / 2))))
 
                     true_traj.append(next_state)
 

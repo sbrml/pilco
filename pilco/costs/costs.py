@@ -31,7 +31,6 @@ class EQCost(Cost):
                  target_loc,
                  target_scale,
                  target_dim,
-                 indices,
                  dtype,
                  transform = None,
                  name="eq_cost",
@@ -57,9 +56,6 @@ class EQCost(Cost):
             raise CostError(f"Expected target_loc.shape == target_scale.shape "
                             f"found {self.target_loc.shape}, {self.target_scale.shape}.")
 
-        self.indices = tf.convert_to_tensor(indices)
-        self.indices = tf.cast(self.indices, tf.int32)
-
         if transform is None:
             transform = IdentityTransform()
 
@@ -80,15 +76,6 @@ class EQCost(Cost):
         if tf.rank(cov) != 2 or cov.shape[0] != cov.shape[1] or cov.shape[1] != loc.shape[1]:
             raise CostError(f"Incorrect dimensions for covariance!"
                             f" (Expected ({loc.shape[1], loc.shape[1]}), found {cov.shape})")
-
-        # # Slice indices into the location vector
-        # loc_indices = self.indices[:, None]
-        #
-        # # Get slices into the covariance matrix
-        # cov_indices = tf.stack(tf.meshgrid(loc_indices, loc_indices), axis=2)
-        #
-        # loc = tf.gather_nd(loc[0], loc_indices)[None, :]
-        # cov = tf.gather_nd(cov, cov_indices)
 
         loc, cov = self.transform.match_moments(loc=loc,
                                                 cov=cov,

@@ -1,8 +1,11 @@
 import abc
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 
 from pilco.utils import get_complementary_indices
+
+tfd = tfp.distributions
 
 
 def get_loc_cov_indices(indices, dims, cov=True):
@@ -49,6 +52,7 @@ class MomentMatchingTransform(Transfrom, abc.ABC):
                  dtype=tf.float64,
                  name="moment_matching_transform",
                  **kwargs):
+
         super().__init__(name=name,
                          dtype=dtype,
                          **kwargs)
@@ -181,10 +185,78 @@ class AbsoluteValueTransform(MomentMatchingTransform):
                          **kwargs)
 
     def match_moments(self, loc, cov, indices):
-        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, full_dim)
+
+        # TODO: make this return the proper covariance matrix
+        # Get indices to slice loc and cov by
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, loc.shape[0])
+
+        # Slice loc and cov
+        loc_a = tf.gather_nd(loc, indices_a)
+        loc_b = tf.gather_nd(loc, indices_b)
+
+        cov_aa = tf.gather_nd(cov, indices_aa)
+        cov_ab = tf.gather_nd(cov, indices_ab)
+        cov_ba = tf.gather_nd(cov, indices_ba)
+        cov_bb = tf.gather_nd(cov, indices_bb)
+
+        # Get diagonal of covariance matrix
+        sigma_aa = tf.linalg.diag_part(cov_aa) ** 0.5
+
+        # Standard normal for both normal and cdf terms
+        standard_normal = tfd.Normal(loc=tf.zeros_like(loc_a),
+                                     scale=tf.ones_like(sigma_aa))
+
+        loc_over_sigma = loc_a / sigma_aa
+
+        # Compute normal term
+        normal_term = 2 * sigma_aa * standard_normal.prob(loc_over_sigma)
+
+        # Compute cdf term
+        phi1 = standard_normal.cdf(loc_over_sigma)
+        phi2 = standard_normal.cdf(-loc_over_sigma)
+        cdf_term = loc_a * (phi1 - phi2)
+
+        # Expectation of absolute value is the sum of normal and cdf terms
+        abs_loc_a = normal_term + cdf_term
+
+        # Diagonal part of covariance matrix
+        abs_cov_aa = tf.linalg.diag(loc_a ** 2 + sigma_aa ** 2 - abs_loc_a ** 2)[0, :, :]
+
+        # Put expectation entries together
+        abs_loc = tf.scatter_nd(indices_a, abs_loc_a, shape=loc.shape)
+        abs_loc = tf.tensor_scatter_nd_update(abs_loc, indices_b, loc_b)
+
+        # Put covariance terms together
+        abs_cov = tf.scatter_nd(indices_aa, abs_cov_aa, shape=cov.shape)
+
+        abs_cov = tf.tensor_scatter_nd_update(abs_cov,
+                                              indices_ab,
+                                              cov_ab)
+
+        abs_cov = tf.tensor_scatter_nd_update(abs_cov,
+                                              indices_ba,
+                                              cov_ba)
+
+        abs_cov = tf.tensor_scatter_nd_update(abs_cov,
+                                              indices_bb,
+                                              cov_bb)
+
+        return abs_loc, abs_cov
+
 
     def call(self, tensor, indices):
-        pass
+
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, tensor.shape[0])
+
+        tensor_a = tensor[indices_a]
+        tensor_b = tensor[indices_b]
+
+        abs_tensor_a = tf.abs(tensor_a)
+
+        abs_tensor = tf.scatter_nd(indices_a, abs_tensor_a, shape=tensor.shape)
+        abs_tensor = tf.tensor_scatter_nd_update(abs_tensor, indices_b, tensor_b)
+
+        return abs_tensor
 
 
 class SineTransformWithPhase(MomentMatchingTransform):
@@ -385,3 +457,4 @@ class CosineTransform(SineTransformWithPhase):
                          dtype=dtype,
                          name=name,
                          **kwargs)
+
