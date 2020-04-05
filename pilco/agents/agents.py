@@ -190,8 +190,8 @@ class EQGPAgent(Agent):
                                        dtype=dtype)
 
         self.eq_scales = BoundedVariable(eq_scales_init,
-                                         lower=1e-1,
-                                         upper=1e2,
+                                         lower=1e-2,
+                                         upper=1e3,
                                          name='eq_scales',
                                          dtype=dtype)
 

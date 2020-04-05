@@ -1,4 +1,6 @@
 # Custom ignores
+gifs_
+plots_
 .idea
 venv-pilco
 pilco-venv

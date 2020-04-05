@@ -5,6 +5,28 @@ import numpy as np
 from pilco.utils import get_complementary_indices
 
 
+def get_loc_cov_indices(indices, dims, cov=True):
+    # Create index sets for slicing.
+    # Index set A: slice that we will pass through the trig function
+    # Index set B: slice that will NOT be transformed
+    # Note, that the indices need to be rank-2 in order to select a vector, not a scalar
+    indices_a = indices[:, None]
+    indices_b = get_complementary_indices(indices, dims)[:, None]
+
+    if cov:
+        # Get slices into the covariance matrix
+        indices_aa = tf.stack(tf.meshgrid(indices_a, indices_a), axis=2)
+        indices_bb = tf.stack(tf.meshgrid(indices_b, indices_b), axis=2)
+
+        indices_ab = tf.stack(tf.meshgrid(indices_b, indices_a), axis=2)
+        indices_ba = tf.stack(tf.meshgrid(indices_a, indices_b), axis=2)
+
+        return indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba
+
+    else:
+        return indices_a, indices_b
+
+
 class TransformError(Exception):
     pass
 
@@ -42,6 +64,13 @@ class MomentMatchingTransform(Transfrom, abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def call(self, tensor, indices):
+        pass
+
+    def __call__(self, tensor, indices):
+        return self.call(tensor, indices)
+
 
 class IdentityTransform(MomentMatchingTransform):
 
@@ -69,6 +98,92 @@ class ReplicationTransform(MomentMatchingTransform):
                          **kwargs)
 
     def match_moments(self, loc, cov, indices):
+        pass
+
+
+class ChainedMomentMatchingTransfom(MomentMatchingTransform):
+
+    def __init__(self,
+                 transforms,
+                 dtype=tf.float64,
+                 name="chained_moment_matching_transform",
+                 **kwargs):
+
+        super().__init__(name=name,
+                         dtype=dtype,
+                         **kwargs)
+
+        for i, t in enumerate(transforms):
+            if not issubclass(t.__class__, MomentMatchingTransform):
+                raise TransformError(f"{i}-th element of transform list was not "
+                                     f"subclass of MomentMatchingTransform, got {t} instead!")
+
+        self.transforms = transforms
+
+    def match_moments(self, loc, cov, indices):
+
+        for t in self.transforms:
+            loc, cov = t.match_moments(loc, cov, indices)
+
+        return loc, cov
+
+    def call(self, tensor, indices):
+
+        for t in self.transforms:
+            tensor = t(tensor, indices)
+
+        return tensor
+
+
+class AffineTransform(MomentMatchingTransform):
+
+    def __init__(self,
+                 scale=None,
+                 shift=None,
+                 dtype=tf.float64,
+                 name="affine_transform",
+                 **kwargs):
+
+        super().__init__(dtype=dtype,
+                         name=name,
+                         **kwargs)
+
+        if scale is None:
+            self.scale = tf.constant(1, dtype=self.dtype)
+
+        else:
+            self.scale = tf.convert_to_tensor(scale)
+            self.scale = tf.cast(self.scale, self.dtype)
+
+        if shift is None:
+            self.shift = tf.constant(0, dtype=self.dtype)
+
+        else:
+            self.shift = tf.convert_to_tensor(shift)
+            self.shift = tf.cast(self.shift, self.dtype)
+
+    def match_moments(self, loc, cov, indices):
+        pass
+
+    def call(self, tensor, indices):
+        pass
+
+
+class AbsoluteValueTransform(MomentMatchingTransform):
+
+    def __init__(self,
+                 dtype=tf.float64,
+                 name="absolute_value_transform",
+                 **kwargs):
+
+        super().__init__(dtype=dtype,
+                         name=name,
+                         **kwargs)
+
+    def match_moments(self, loc, cov, indices):
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, full_dim)
+
+    def call(self, tensor, indices):
         pass
 
 
@@ -149,19 +264,7 @@ class SineTransformWithPhase(MomentMatchingTransform):
 
         # TODO: Check there are no duplicates in the index list
 
-        # Create index sets for slicing.
-        # Index set A: slice that we will pass through the trig function
-        # Index set B: slice that will NOT be transformed
-        # Note, that the indices need to be rank-2 in order to select a vector, not a scalar
-        indices_a = indices[:, None]
-        indices_b = get_complementary_indices(indices, full_dim)[:, None]
-
-        # Get slices into the covariance matrix
-        indices_aa = tf.stack(tf.meshgrid(indices_a, indices_a), axis=2)
-        indices_bb = tf.stack(tf.meshgrid(indices_b, indices_b), axis=2)
-
-        indices_ab = tf.stack(tf.meshgrid(indices_b, indices_a), axis=2)
-        indices_ba = tf.stack(tf.meshgrid(indices_a, indices_b), axis=2)
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, full_dim)
 
         a_dim = indices_a.shape[0]
 
@@ -233,19 +336,21 @@ class SineTransformWithPhase(MomentMatchingTransform):
 
         return mean_full_bounded, cov_full_bounded
 
-    def __call__(self, tensor, indices):
+    def call(self, tensor, indices):
 
         # Convert inputs
         tensor = tf.convert_to_tensor(tensor)
         tensor = tf.cast(tensor, self.dtype)
 
         indices = tf.convert_to_tensor(indices)
-        indices = tf.cast(indices, tf.int32)[:, None]
+        indices = tf.cast(indices, tf.int32)
 
-        tensor_a = tf.gather_nd(tensor, indices)
+        indices_a, _ = get_loc_cov_indices(indices, tensor.shape[0], cov=False)
+
+        tensor_a = tf.gather_nd(tensor, indices_a)
 
         tensor_a = self.shift + self.scale * tf.sin(tensor_a + self.phase)
-        tensor = tf.tensor_scatter_nd_update(tensor, indices, tensor_a)
+        tensor = tf.tensor_scatter_nd_update(tensor, indices_a, tensor_a)
 
         return tensor
 

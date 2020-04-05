@@ -27,26 +27,28 @@ experiment = Experiment('pendulum-experiment')
 @experiment.config
 def config():
     # Lengthscale for gaussian cost
-    target_scale = [[1.0, 8.0]]
+    target_scale = [[0.5, 40.0]]
+
+    agent_replay_buffer_limit = 210
 
     # Number of rbf features in policy
     num_rbf_features = 50
 
     # Subsampling factor
-    sub_sampling_factor = 3
+    sub_sampling_factor = 2
 
     # Number of episodes of random sampling of data
     num_random_episodes = 2
 
     # Number of steps per random episode
-    num_steps_per_random_episode = 40
+    num_steps_per_random_episode = 70
 
     # Parameters for agent-environment loops
-    optimisation_horizon = 40
-    num_optim_steps = 100
+    optimisation_horizon = 70
+    num_optim_steps = 50
 
     num_episodes = 10
-    num_steps_per_episode = 40
+    num_steps_per_episode = 70
 
     # Number of optimisation steps for dynamics GPs
     num_dynamics_optim_steps = 30
@@ -61,7 +63,7 @@ def config():
     dynamics_optimisation_restarts = 3
 
     # Optimsation exit criterion tolerance
-    tolerance = 1e-4
+    tolerance = 1e-5
 
 
 class PendulumAgent(EQGPAgent):
@@ -216,6 +218,7 @@ def experiment(num_random_episodes,
                num_optim_steps,
                num_episodes,
                num_steps_per_episode,
+               agent_replay_buffer_limit,
                policy_lr,
                dynamics_lr,
                tolerance):
@@ -259,7 +262,7 @@ def experiment(num_random_episodes,
                              action_dim=1,
                              policy=eq_policy,
                              cost=eq_cost,
-                             replay_buffer_limit=160,
+                             replay_buffer_limit=agent_replay_buffer_limit,
                              dtype=dtype)
 
     eq_agent.policy.reset()
@@ -280,6 +283,9 @@ def experiment(num_random_episodes,
             state, action, next_state = env.step(action.numpy())
 
             eq_agent.observe(state, action, next_state)
+
+    print(eq_agent.dynamics_inputs)
+    print(eq_agent.dynamics_outputs)
 
     init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
     init_cov = 1e-4 * tf.eye(2, dtype=tf.float64)
@@ -302,7 +308,7 @@ def experiment(num_random_episodes,
 
         print('Optimising dynamics')
 
-        if episode > 1:
+        if episode > -1:
             # Create variables
             best_eq_scales = eq_agent.eq_scales()
             best_eq_coeff = eq_agent.eq_coeff()
@@ -334,15 +340,16 @@ def experiment(num_random_episodes,
                     gradients = tape.gradient(loss, eq_agent.parameters)
                     dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
 
-                    clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
-                                               [2, 2, np.pi, 4, 1]],
-                                              dtype=eq_agent.dtype)
+                    # clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
+                    #                            [2, 2, np.pi, 4, 1]],
+                    #                           dtype=eq_agent.dtype)
+                    #
+                    # clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
 
-                    clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
-
+                    clipped_eq_scales = eq_agent.eq_scales()
                     #TODO: Delete this ugly hack, burn it with fire
-                    clip_tensor = tf.constant([[0, 0, 100, 0, 0],
-                                               [0, 0, 100, 0, 0]],
+                    clip_tensor = tf.constant([[0, 0, 000, 0, 0],
+                                               [0, 0, 000, 0, 0]],
                                               dtype=eq_agent.dtype)
                     clipped_eq_scales = tf.maximum(clipped_eq_scales, clip_tensor)
 
@@ -371,8 +378,8 @@ def experiment(num_random_episodes,
         else:
             eq_agent.set_eq_scales_from_data()
             # TODO: Delete this ugly hack, burn it with fire
-            clip_tensor = tf.constant([[0, 0, 100, 0, 0],
-                                       [0, 0, 100, 0, 0]],
+            clip_tensor = tf.constant([[0, 0, 00, 0, 0],
+                                       [0, 0, 00, 0, 0]],
                                       dtype=eq_agent.dtype)
             clipped_eq_scales = tf.maximum(eq_agent.eq_scales(), clip_tensor)
             eq_agent.eq_scales.assign(clipped_eq_scales)
