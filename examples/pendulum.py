@@ -32,7 +32,7 @@ def config():
     agent_replay_buffer_limit = 100000
 
     # Number of rbf features in policy
-    num_rbf_features = 50
+    num_rbf_features = 10
 
     # Subsampling factor
     sub_sampling_factor = 4
@@ -45,7 +45,7 @@ def config():
 
     # Parameters for agent-environment loops
     optimisation_horizon = 40
-    num_optim_steps = 100
+    num_optim_steps = 50
 
     num_episodes = 10
     num_steps_per_episode = 40
@@ -254,10 +254,10 @@ def experiment(num_random_episodes,
     sine_transform = SineTransform(lower=-2,
                                    upper=2)
 
-    fucking_work_already = SineTransform(lower=-1,
+    cost_sine_transform = SineTransform(lower=-1,
                                          upper=1)
 
-    abs_transform = AbsoluteValueTransform()
+    cost_abs_transform = AbsoluteValueTransform()
 
     eq_policy = TransformedPolicy(policy=eq_policy,
                                   transform=sine_transform)
@@ -436,10 +436,10 @@ def experiment(num_random_episodes,
                         cov_ = 0.25 * cov[:1, :1]
 
                         # Moment match by sine
-                        loc_, cov_ = fucking_work_already.match_moments(loc_, cov_, indices=tf.constant([0]))
+                        loc_, cov_ = cost_sine_transform.match_moments(loc_, cov_, indices=tf.constant([0]))
 
                         # Moment match by absolute value
-                        loc_, cov_ = abs_transform.match_moments(loc_, cov_, indices=tf.constant([0]))
+                        loc_, cov_ = cost_abs_transform.match_moments(loc_, cov_, indices=tf.constant([0]))
 
                         # Moment match by 2
                         loc_ = 2 * loc_
@@ -467,6 +467,7 @@ def experiment(num_random_episodes,
 
                 env.reset()
                 env.env.env.state = init_state.numpy()[0]
+                true_actions = []
                 true_traj.append(init_state.numpy()[0])
 
                 true_cost = 0.
@@ -477,8 +478,10 @@ def experiment(num_random_episodes,
                     true_cost = true_cost + eq_cost(tf.convert_to_tensor(2 * tf.abs(tf.sin(next_state[None, :1] / 2))))
 
                     true_traj.append(next_state)
+                    true_actions.append(action)
 
                 true_traj = np.stack(true_traj, axis=0)
+                true_actions = np.stack(true_actions, axis=0)[:, 0]
 
                 # Run rollout and plot
                 locs_all = np.stack(locs, axis=0)
@@ -489,6 +492,8 @@ def experiment(num_random_episodes,
                                        true_traj,
                                        locs_all,
                                        vars_all,
+                                       policy=eq_agent.policy,
+                                       true_actions=true_actions,
                                        plot_path='../plots/',
                                        plot_prefix=f'optim-{episode}-{n}')
 

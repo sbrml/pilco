@@ -194,21 +194,29 @@ class RBFPolicy(Policy):
 
     def call(self, state):
         # Convert state to tensor and reshape to be rank 2
-        state = tf.convert_to_tensor(state, dtype=self.dtype)
-        state = tf.reshape(state, (1, -1))
+        state = tf.convert_to_tensor(state)
+        state = tf.cast(state, self.dtype)
+
+        # N x D
+        state = tf.reshape(state, (-1, self.state_dim))
 
         # Compute quadratic form and exponentiate for each component
-        diff_state_mui = state - self.rbf_locs()
-        quad = tf.einsum('ik, lk, ik -> i',
+        # N x F x D
+        diff_state_mui = state[:, None, :] - self.rbf_locs()[None, :, :]
+
+        # N x F
+        quad = tf.einsum('nik, lk, nik -> ni',
                          diff_state_mui,
-                         self.rbf_scales ** -1,
+                         1. / self.rbf_scales,
                          diff_state_mui)
 
+        # N x F
         exp_quad = tf.math.exp(-0.5 * quad)
 
         # RBF output is the weighted sum of rbf components
-        rbf = tf.einsum('i, i ->',
+        # N
+        rbf = tf.einsum('i, ni -> n',
                         self.rbf_weights(),
                         exp_quad)
 
-        return rbf
+        return rbf[:, None]
