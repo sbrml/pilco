@@ -51,10 +51,21 @@ class RBFPolicy(Policy):
         return self.rbf_locs.var, self.rbf_log_scales.var, self.rbf_weights.var
 
     def reset(self):
+
         # Sample policy parameters from standard normal
+        rbf_sin_locs = tf.random.uniform(shape=(self.num_rbf_features,),
+                                         minval=-1.,
+                                         maxval=1.,
+                                         dtype=self.dtype)
+
+        rbf_cos_locs = tf.random.uniform(shape=(self.num_rbf_features,),
+                                         minval=-1.,
+                                         maxval=1.,
+                                         dtype=self.dtype)
+
         rbf_theta_locs = tf.random.uniform(shape=(self.num_rbf_features,),
-                                           minval=-np.pi,
-                                           maxval=np.pi,
+                                           minval=0.,
+                                           maxval=0.,
                                            dtype=self.dtype)
 
         rbf_theta_dot_locs = tf.random.uniform(shape=(self.num_rbf_features,),
@@ -62,7 +73,10 @@ class RBFPolicy(Policy):
                                                maxval=8.,
                                                dtype=self.dtype)
 
-        self.rbf_locs.assign(tf.stack([rbf_theta_locs, rbf_theta_dot_locs], axis=-1))
+        self.rbf_locs.assign(tf.stack([rbf_sin_locs,
+                                       rbf_cos_locs,
+                                       rbf_theta_locs,
+                                       rbf_theta_dot_locs], axis=-1))
 
         self.rbf_log_scales.assign(self.num_rbf_features ** -0.5 * tf.ones(shape=(1, self.state_dim), dtype=self.dtype))
 
@@ -194,29 +208,21 @@ class RBFPolicy(Policy):
 
     def call(self, state):
         # Convert state to tensor and reshape to be rank 2
-        state = tf.convert_to_tensor(state)
-        state = tf.cast(state, self.dtype)
-
-        # N x D
-        state = tf.reshape(state, (-1, self.state_dim))
+        state = tf.convert_to_tensor(state, dtype=self.dtype)
+        state = tf.reshape(state, (1, -1))
 
         # Compute quadratic form and exponentiate for each component
-        # N x F x D
-        diff_state_mui = state[:, None, :] - self.rbf_locs()[None, :, :]
-
-        # N x F
-        quad = tf.einsum('nik, lk, nik -> ni',
+        diff_state_mui = state - self.rbf_locs()
+        quad = tf.einsum('ik, lk, ik -> i',
                          diff_state_mui,
-                         1. / self.rbf_scales,
+                         self.rbf_scales ** -1,
                          diff_state_mui)
 
-        # N x F
         exp_quad = tf.math.exp(-0.5 * quad)
 
         # RBF output is the weighted sum of rbf components
-        # N
-        rbf = tf.einsum('i, ni -> n',
+        rbf = tf.einsum('i, i ->',
                         self.rbf_weights(),
                         exp_quad)
 
-        return rbf[:, None]
+        return rbf

@@ -20,8 +20,7 @@ def plot_pendulum_rollouts(steps,
                            policy,
                            true_actions,
                            s_points=60,
-                           s_dot_points=30
-                           ):
+                           s_dot_points=30):
 
     # Get true trajectories
     true_thetas = true_traj[:, 0]
@@ -61,7 +60,7 @@ def plot_pendulum_rollouts(steps,
     plt.grid(True)
     plt.ylim([-10., 10])
 
-    s_linspace = tf.cast(tf.linspace(-3 * np.pi, 2 * np.pi, s_points), dtype=tf.float64)
+    s_linspace = tf.cast(tf.linspace(-4 * np.pi, 2 * np.pi, s_points), dtype=tf.float64)
 
     s_dot_linspace = tf.cast(tf.linspace(-8., 8., s_dot_points), dtype=tf.float64)
 
@@ -74,17 +73,21 @@ def plot_pendulum_rollouts(steps,
     actions = tf.stack([policy(point) for point in grid], axis=0)
     actions = tf.reshape(actions, (s_dot_points, s_points))
 
-    centroids = policy.policy.rbf_locs().numpy()
+    centroids = policy.eq_policy.policy.rbf_locs().numpy()
+
+    centroid_thetas = np.arctan2(centroids[:, 0], centroids[:, 1])
+    centroid_theta_dots = centroids[:, 3]
 
     plt.subplot(223)
     contour = plt.contourf(s_grid, s_dot_grid, actions, cmap='coolwarm', alpha=0.5)
-    plt.scatter(centroids[:, 0], centroids[:, 1], marker='x', c='k')
+    plt.scatter(centroid_thetas, centroid_theta_dots, marker='x', c='k')
     plt.plot(true_thetas, true_thetadots, c='k', linestyle='--')
     plt.plot(theta_means, thetadot_means, c='k')
     plt.clim(-2, 2)
     plt.colorbar(contour)
     plt.xlabel("Theta")
     plt.ylabel("Theta dot")
+    plt.xlim([-4. * np.pi, 2. * np.pi])
 
     plt.subplot(224)
     plt.plot(steps[:-1], true_actions, c='k')

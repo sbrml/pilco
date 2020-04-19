@@ -82,12 +82,16 @@ class IdentityTransform(MomentMatchingTransform):
                  dtype=tf.float64,
                  name="identity_mm_transform",
                  **kwargs):
+
         super().__init__(dtype=dtype,
                          name=name,
                          **kwargs)
 
     def match_moments(self, loc, cov, indices):
         return loc, cov
+
+    def call(self, tensor, indices):
+        return tensor
 
 
 class ReplicationTransform(MomentMatchingTransform):

@@ -3,8 +3,8 @@ import tensorflow as tf
 import numpy as np
 
 from pilco.environments import Environment
-from pilco.policies import RBFPolicy, TransformedPolicy
-from pilco.transforms import SineTransform, CosineTransform, SineTransformWithPhase, AbsoluteValueTransform
+from pilco.policies import Policy, RBFPolicy, TransformedPolicy
+from pilco.transforms import SineTransform, IdentityTransform, SineTransformWithPhase, AbsoluteValueTransform
 from pilco.costs import EQCost
 from pilco.agents import EQGPAgent
 
@@ -32,7 +32,7 @@ def config():
     agent_replay_buffer_limit = 100000
 
     # Number of rbf features in policy
-    num_rbf_features = 10
+    num_rbf_features = 30
 
     # Subsampling factor
     sub_sampling_factor = 4
@@ -69,28 +69,25 @@ def config():
 class PendulumAgent(EQGPAgent):
 
     def __init__(self,
-                 state_dim,
-                 action_dim,
                  policy,
                  cost,
                  dtype=tf.float64,
                  name='pendulum_agent',
                  **kwargs):
-        super().__init__(in_state_dim=state_dim + 2,
-                         out_state_dim=state_dim,
-                         action_dim=action_dim,
+
+        super().__init__(in_state_dim=4,
+                         out_state_dim=2,
+                         action_dim=1,
                          policy=policy,
                          cost=cost,
                          dtype=dtype,
                          name=name,
                          **kwargs)
 
-        self.trig_space_transform = SineTransformWithPhase(lower=-1,
-                                                           upper=1,
-                                                           phase=tf.constant([[0., np.pi / 2.]],
-                                                                             dtype=dtype))
+
 
     def preprocess_observations(self, state, action, next_state):
+
         state = self._validate_and_convert(state, last_dim=self.in_state_dim - 2)
         action = self._validate_and_convert(action, last_dim=self.action_dim)
         next_state = self._validate_and_convert(next_state, last_dim=self.out_state_dim)
@@ -106,35 +103,25 @@ class PendulumAgent(EQGPAgent):
 
         return trig_state, action, delta_state
 
+
     def match_moments(self, mean_full, cov_full):
-        mean_full = tf.reshape(mean_full, shape=(1, self.in_state_and_action_dim - 2))
-        cov_full = tf.reshape(cov_full, shape=(self.in_state_and_action_dim - 2,
-                                               self.in_state_and_action_dim - 2))
 
-        # Replicate the theta components in the loc and cov
-        mean_full_ = tf.concat([mean_full[:, :1], mean_full[:, :1], mean_full], axis=1)
+        """
+        :param mean_full:
+        :param cov_full:
+        :return:
 
-        rep_cov_theta_theta = tf.tile(cov_full[:1, :1], [3, 3])
-        rep_cov_theta_thetadot = tf.tile(cov_full[:1, 1:], [3, 1])
-        rep_cov_thetadot_theta = tf.tile(cov_full[1:, :1], [1, 3])
+        Assumes *mean_full* and *cov_full* are in [sin, cos, theta, theta_dot, torque] space.
+        """
 
-        row_blocks = [
-            tf.concat([rep_cov_theta_theta, rep_cov_theta_thetadot], axis=1),
-            tf.concat([rep_cov_thetadot_theta, cov_full[1:, 1:]], axis=1)
-        ]
+        mean, cov, cross_cov = super().match_delta_moments(mean_full, cov_full)
 
-        cov_full_ = tf.concat(row_blocks, axis=0)
-
-        mean_full_, cov_full_ = self.trig_space_transform.match_moments(loc=mean_full_[0],
-                                                                        cov=cov_full_,
-                                                                        indices=[0, 1])
-
-        mean, cov, cross_cov = super().match_delta_moments(mean_full_, cov_full_)
+        # print(f'{type(self)}.match_moments mean.shape, cov.shape, cross_cov.shape {mean.shape, cov.shape, cross_cov.shape}')
 
         # Calcuate successor mean and covariance
-        mean = mean + mean_full[0, :self.out_state_dim]
+        mean = mean + mean_full[0, 2:4]
 
-        cov = cov + cov_full[:self.out_state_dim, :self.out_state_dim]
+        cov = cov + cov_full[2:4, 2:4]
 
         cross_cov = cross_cov[2:, :]
 
@@ -142,15 +129,128 @@ class PendulumAgent(EQGPAgent):
 
         return mean, cov
 
-    def gp_posterior_predictive(self, x_star):
-        x_star = self._validate_and_convert(x_star, self.in_state_and_action_dim - 2)
 
-        x_star_ = tf.concat([x_star[:, :1], x_star[:, :1], x_star], axis=1)
+class PendulumPolicy(Policy):
 
-        return super().gp_posterior_predictive(x_star_)
+    def __init__(self,
+                 num_rbf_features,
+                 dtype,
+                 name='pendulum_policy',
+                 **kwargs):
+
+        super().__init__(state_dim=4,
+                         action_dim=1,
+                         dtype=dtype,
+                         name=name,
+                         **kwargs)
+
+        # Create EQ policy
+        eq_policy = RBFPolicy(state_dim=4,
+                              action_dim=1,
+                              num_rbf_features=num_rbf_features,
+                              dtype=dtype)
+
+        # We can bound the range of the policy by passing it through an appropriately
+        # Shifted and scaled sine function.
+        sine_transform = SineTransform(lower=-2,
+                                       upper=2)
+
+        self.eq_policy = TransformedPolicy(policy=eq_policy,
+                                           transform=sine_transform)
+
+        phase = tf.constant([0., np.pi / 2.], dtype=dtype)
+        self.trig_space_transform = SineTransformWithPhase(lower=-1,
+                                                           upper=1,
+                                                           phase=phase)
+
+    def match_moments(self, mean, cov):
+        """
+        :param self:
+        :param mean:
+        :param cov:
+        :return:
+
+        Assumes *mean* and *cov* are in [theta, theta_dot] space.
+        Output is in [sin, cos, theta, theta_dot, action] space.
+        """
+
+        # print(f'{type(self)}.forward before replicating mean.shape, cov.shape {mean.shape, cov.shape}')
+        mean, cov = self.match_moments_to_trig_and_theta_space(mean, cov)
+        # print(f'{type(self)}.forward after replicating mean.shape, cov.shape {mean.shape, cov.shape}')
+        mean_full, cov_full = self.eq_policy.match_moments(mean, cov)
+        # print(f'{type(self)}.forward after last moment matching mean_full.shape, cov_full.shape {mean.shape, cov.shape}')
+
+        return mean_full, cov_full
+
+
+    def call(self, state):
+        """
+        :param self:
+        :param state:
+        :return:
+
+        Assumes *state* is in [theta, theta_dot] space.
+        Output is in [sin, cos, theta, theta_dot, action] space.
+        """
+
+        state = tf.reshape(state, shape=(1, 2))
+
+        # Replicate the theta components in the loc and cov
+        state = tf.concat([state[:, :1], state[:, :1], state], axis=1)
+
+        state = self.trig_space_transform(tensor=state[0],
+                                          indices=[0, 1])
+
+        action = self.eq_policy(state)
+
+        return action
+
+
+    def match_moments_to_trig_and_theta_space(self, mean, cov):
+
+        mean = tf.reshape(mean, shape=(1, 2))
+        cov = tf.reshape(cov, shape=(2, 2))
+
+        # Replicate the theta components in the loc and cov
+        mean_ = tf.concat([mean[:, :1], mean[:, :1], mean], axis=1)
+
+        rep_cov_theta_theta = tf.tile(cov[:1, :1], [3, 3])
+        rep_cov_theta_thetadot = tf.tile(cov[:1, 1:], [3, 1])
+        rep_cov_thetadot_theta = tf.tile(cov[1:, :1], [1, 3])
+
+        row_blocks = [
+            tf.concat([rep_cov_theta_theta, rep_cov_theta_thetadot], axis=1),
+            tf.concat([rep_cov_thetadot_theta, cov[1:, 1:]], axis=1)
+        ]
+
+        cov_ = tf.concat(row_blocks, axis=0)
+
+        # Moment match (replicated) thetas across sine and cosine
+        mean, cov = self.trig_space_transform.match_moments(loc=mean_[0],
+                                                            cov=cov_,
+                                                            indices=[0, 1])
+
+        return mean, cov
+
+
+    def reset(self):
+        self.eq_policy.reset()
+
+
+    def clip(self):
+
+        rbf_locs = self.eq_policy.policy.rbf_locs().numpy()
+        rbf_locs[:, 2] = 0.
+        self.eq_policy.policy.rbf_locs.assign(rbf_locs)
+
+        rbf_log_scales = self.eq_policy.policy.rbf_log_scales().numpy()
+        rbf_log_scales[:, 2] = 10
+        self.eq_policy.policy.rbf_log_scales.assign(rbf_log_scales)
+
 
 
 def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
+
     test_data = sample_transitions_uniformly(env,
                                              num_episodes,
                                              num_steps,
@@ -222,6 +322,7 @@ def experiment(num_random_episodes,
                policy_lr,
                dynamics_lr,
                tolerance):
+
     dtype = tf.float64
 
     # Create pendulum environment and reset
@@ -233,44 +334,29 @@ def experiment(num_random_episodes,
     target_loc = tf.constant([[0.]], dtype=dtype)
     target_scale = tf.constant(target_scale, dtype=dtype)
 
-    cost_transform = CosineTransform(lower=-1.,
-                                     upper=1.,
-                                     dtype=dtype)
+    # THESE ARE THE PARTS OF THE COST WE ARE CURRENTLY USING
+    cost_sine_transform = SineTransform(lower=-1,
+                                        upper=1)
+
+    cost_abs_transform = AbsoluteValueTransform()
 
     eq_cost = EQCost(target_loc=target_loc,
                      target_scale=target_scale,
                      target_dim=1,
-                     transform=cost_transform,
+                     transform=IdentityTransform(),
                      dtype=dtype)
 
-    # Create EQ policy
-    eq_policy = RBFPolicy(state_dim=2,
-                          action_dim=1,
-                          num_rbf_features=num_rbf_features,
-                          dtype=dtype)
-
-    # We can bound the range of the policy by passing it through an appropriately
-    # Shifted and scaled sine function.
-    sine_transform = SineTransform(lower=-2,
-                                   upper=2)
-
-    cost_sine_transform = SineTransform(lower=-1,
-                                         upper=1)
-
-    cost_abs_transform = AbsoluteValueTransform()
-
-    eq_policy = TransformedPolicy(policy=eq_policy,
-                                  transform=sine_transform)
+    eq_policy = PendulumPolicy(num_rbf_features=num_rbf_features,
+                               dtype=dtype)
 
     # Create agent
-    eq_agent = PendulumAgent(state_dim=2,
-                             action_dim=1,
-                             policy=eq_policy,
+    eq_agent = PendulumAgent(policy=eq_policy,
                              cost=eq_cost,
                              replay_buffer_limit=agent_replay_buffer_limit,
                              dtype=dtype)
 
     eq_agent.policy.reset()
+
 
     for episode in trange(num_random_episodes):
 
@@ -289,9 +375,6 @@ def experiment(num_random_episodes,
 
             eq_agent.observe(state, action, next_state)
 
-    print(eq_agent.dynamics_inputs)
-    print(eq_agent.dynamics_outputs)
-
     init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
     init_cov = 1e-4 * tf.eye(2, dtype=tf.float64)
 
@@ -305,11 +388,11 @@ def experiment(num_random_episodes,
         print(f'Length scales {eq_agent.eq_scales().numpy()}')
         print(f'Signal amplitude {eq_agent.eq_coeff().numpy()}')
         print(f'Noise amplitude {eq_agent.eq_noise_coeff().numpy()}')
-        evaluate_agent_dynamics(eq_agent,
-                                env,
-                                num_episodes=100,
-                                num_steps=1,
-                                seed=0)
+        # evaluate_agent_dynamics(eq_agent,
+        #                         env,
+        #                         num_episodes=100,
+        #                         num_steps=1,
+        #                         seed=0)
 
         print('Optimising dynamics')
 
@@ -389,16 +472,16 @@ def experiment(num_random_episodes,
             clipped_eq_scales = tf.maximum(eq_agent.eq_scales(), clip_tensor)
             eq_agent.eq_scales.assign(clipped_eq_scales)
 
-        evaluate_agent_dynamics(eq_agent, env, 1000, 1, seed=0)
+        # evaluate_agent_dynamics(eq_agent, env, 1000, 1, seed=0)
         print('\nEvaluating dynamics before optimisation')
         print(f'Length scales {eq_agent.eq_scales().numpy()}')
         print(f'Signal amplitude {eq_agent.eq_coeff().numpy()}')
         print(f'Noise amplitude {eq_agent.eq_noise_coeff().numpy()}')
-        evaluate_agent_dynamics(eq_agent,
-                                env,
-                                num_episodes=100,
-                                num_steps=1,
-                                seed=0)
+        # evaluate_agent_dynamics(eq_agent,
+        #                         env,
+        #                         num_episodes=100,
+        #                         num_steps=1,
+        #                         seed=0)
 
         eq_agent.policy.reset()
 
@@ -421,7 +504,7 @@ def experiment(num_random_episodes,
 
                 with tf.GradientTape(watch_accessed_variables=False) as tape:
 
-                    tape.watch(eq_agent.policy.parameters)
+                    tape.watch(eq_agent.policy.eq_policy.parameters)
 
                     for t in range(current_optimisation_horizon):
                         mean_full, cov_full = eq_agent.policy.match_moments(loc, cov)
@@ -431,6 +514,7 @@ def experiment(num_random_episodes,
                         locs.append(loc.numpy())
                         covs.append(cov.numpy())
 
+                        # Slicing out the θ
                         # Moment match by 1/2
                         loc_ = 0.5 * loc[:1]
                         cov_ = 0.25 * cov[:1, :1]
@@ -453,9 +537,11 @@ def experiment(num_random_episodes,
 
                     cost = cost / tf.cast(optimisation_horizon, dtype=eq_cost.dtype)
 
-                gradients = tape.gradient(cost, eq_agent.policy.parameters)
+                gradients = tape.gradient(cost, eq_agent.policy.eq_policy.parameters)
 
-                policy_optimiser.apply_gradients(zip(gradients, eq_agent.policy.parameters))
+                policy_optimiser.apply_gradients(zip(gradients, eq_agent.policy.eq_policy.parameters))
+
+                eq_agent.policy.clip()
 
                 if tf.abs(cost - prev_loss) < tolerance:
                     print(f"Early convergence!")
@@ -486,6 +572,7 @@ def experiment(num_random_episodes,
                 # Run rollout and plot
                 locs_all = np.stack(locs, axis=0)
                 vars_all = np.stack(covs, axis=0)[:, [0, 1], [0, 1]]
+                print(f'locs_all.shape, covs_all.shape, {locs_all.shape, np.stack(covs, axis=0).shape}')
                 steps = np.arange(locs_all.shape[0])
 
                 plot_pendulum_rollouts(steps,

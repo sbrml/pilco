@@ -101,5 +101,6 @@ class EQCost(Cost):
 
         return cost
 
+
     def call(self, loc):
         return self.expected_cost(loc, tf.zeros([loc.shape[1], loc.shape[1]]))

@@ -42,14 +42,5 @@ class TransformedPolicy(Policy):
         return loc, cov
 
     def call(self, state):
-        # Convert state to tensor and reshape to be rank 2
-        state = tf.convert_to_tensor(state)
-        state = tf.cast(state, self.dtype)
-
-        # N x D
-        state = tf.reshape(state, (-1, self.state_dim))
-
-        # N x (D + A)
-        full_vec = tf.concat([state, self.policy(state)], axis=1)
-
-        return self.transform(full_vec, indices=self.action_indices)[:, self.state_dim:]
+        full_vec = tf.concat([state, [self.policy(state)]], axis=0)
+        return self.transform(full_vec, indices=self.action_indices)[self.state_dim:]
