@@ -41,7 +41,7 @@ def config():
     num_random_episodes = 2
 
     # Number of steps per random episode
-    num_steps_per_random_episode = 30
+    num_steps_per_random_episode = 20
 
     # Parameters for agent-environment loops
     optimisation_horizon = 40
@@ -248,7 +248,6 @@ class PendulumPolicy(Policy):
         self.eq_policy.policy.rbf_log_scales.assign(rbf_log_scales)
 
 
-
 def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
 
     test_data = sample_transitions_uniformly(env,
@@ -364,7 +363,7 @@ def experiment(num_random_episodes,
         eq_agent.policy.reset()
 
         # state = np.array([np.pi, 8]) * (2 * np.random.uniform(size=(2,)) - 1)
-        state = np.array([-np.pi + np.random.normal(0., 0.1), 0.])
+        state = np.array([np.random.normal(0., 0.1), 0.])
         # state = np.array([np.pi, 8]) * (2 * np.random.uniform(size=(2,)) - 1)
         env.env.env.state = state
 
@@ -375,7 +374,7 @@ def experiment(num_random_episodes,
 
             eq_agent.observe(state, action, next_state)
 
-    init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
+    init_state = tf.constant([[0., 0.]], dtype=tf.float64)
     init_cov = 1e-4 * tf.eye(2, dtype=tf.float64)
 
     policy_optimiser = tf.optimizers.Adam(policy_lr)
@@ -428,13 +427,13 @@ def experiment(num_random_episodes,
                     gradients = tape.gradient(loss, eq_agent.parameters)
                     dynamics_optimiser.apply_gradients(zip(gradients, eq_agent.parameters))
 
-                    # clip_tensor = tf.constant([[2, 2, np.pi, 4, 1],
-                    #                            [2, 2, np.pi, 4, 1]],
-                    #                           dtype=eq_agent.dtype)
-                    #
-                    # clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
+                    clip_tensor = tf.constant([[1, 1, 100, 8, 4],
+                                               [1, 1, 100, 8, 4]],
+                                              dtype=eq_agent.dtype)
 
-                    clipped_eq_scales = eq_agent.eq_scales()
+                    clipped_eq_scales = tf.minimum(eq_agent.eq_scales(), clip_tensor)
+
+                    # clipped_eq_scales = eq_agent.eq_scales()
                     #TODO: Delete this ugly hack, burn it with fire
                     clip_tensor = tf.constant([[0, 0, 100, 0, 0],
                                                [0, 0, 100, 0, 0]],

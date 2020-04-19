@@ -82,7 +82,7 @@ class RBFPolicy(Policy):
 
         rbf_weights_init = tf.random.normal(shape=(self.num_rbf_features,),
                                             mean=0.,
-                                            stddev=1.,
+                                            stddev=1e-2,
                                             dtype=self.dtype)
         self.rbf_weights.assign(rbf_weights_init)
 

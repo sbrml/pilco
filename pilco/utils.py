@@ -88,6 +88,7 @@ def plot_pendulum_rollouts(steps,
     plt.xlabel("Theta")
     plt.ylabel("Theta dot")
     plt.xlim([-4. * np.pi, 2. * np.pi])
+    plt.ylim([-8., 8.])
 
     plt.subplot(224)
     plt.plot(steps[:-1], true_actions, c='k')
