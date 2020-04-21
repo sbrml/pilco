@@ -420,7 +420,8 @@ def experiment(num_random_episodes,
 
             best_loss = np.inf
 
-            for idx in range(dynamics_optimisation_restarts):
+            idx = 0
+            while idx < dynamics_optimisation_restarts:
 
                 prev_loss = np.inf
 
@@ -444,6 +445,13 @@ def experiment(num_random_episodes,
                       f"loss: {loss:.4f}, "
                       f"converged: {converged}, "
                       f"diverged: {diverged}")
+
+                if diverged:
+                    print("Dynamics optimization diverged, restarting!")
+                    continue
+
+                else:
+                    idx += 1
 
                 if loss < best_loss:
                     best_loss = loss
@@ -668,6 +676,7 @@ def experiment(num_random_episodes,
 
         env.reset()
         env.env.env.state = init_state.numpy()[0]
+        state = init_state.numpy()[0]
 
         frames = []
 
