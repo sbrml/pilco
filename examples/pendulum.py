@@ -33,7 +33,7 @@ def config():
 
     use_lbfgs = True
 
-    agent_replay_buffer_limit = 200
+    agent_replay_buffer_limit = 250
 
     # Number of rbf features in policy
     num_rbf_features = 50
@@ -392,7 +392,7 @@ def experiment(num_random_episodes,
             eq_agent.observe(state, action, next_state)
 
     init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
-    init_cov = 0. * tf.eye(2, dtype=tf.float64)
+    init_cov = 1e-8 * tf.eye(2, dtype=tf.float64)
 
     policy_optimiser = tf.optimizers.Adam(policy_lr)
     dynamics_optimiser = tf.optimizers.Adam(dynamics_lr)
@@ -486,20 +486,68 @@ def experiment(num_random_episodes,
                 loc = init_state
                 cov = init_cov
 
+                locs = [loc[0].numpy()]
+                covs = [cov.numpy()]
+
+                step_costs = []
+
                 for t in range(optimisation_horizon):
                     mean_full, cov_full = eq_agent.policy.match_moments(loc, cov)
 
                     loc, cov = eq_agent.match_moments(mean_full, cov_full)
+                    locs.append(loc.numpy())
+                    covs.append(cov.numpy())
 
                     loc_, cov_ = cost_transform.match_moments(loc[:1], cov[:1, :1], indices=tf.constant([0]))
-
                     step_cost = eq_agent.cost.expected_cost(loc_, cov_)
+
+                    step_costs.append(step_cost)
 
                     cost = cost + step_cost
 
                 cost = cost / tf.cast(optimisation_horizon, dtype=eq_cost.dtype)
 
-                print(f"Current cost: {cost}")
+                print(tf.stack(step_costs, axis=0).numpy())
+
+                env.reset()
+                env.env.env.state = init_state.numpy()[0]
+                state = init_state.numpy()[0]
+
+                true_traj = []
+                true_actions = []
+                true_traj.append(init_state.numpy()[0])
+
+                true_cost = 0.
+
+                for step in range(num_steps_per_episode):
+                    action = eq_agent.act(state)
+                    state, action, next_state = env.step(action.numpy())
+                    true_cost = true_cost + eq_cost(tf.convert_to_tensor(2 * tf.abs(tf.sin(next_state[None, :1] / 2))))
+
+                    true_traj.append(next_state)
+                    true_actions.append(action)
+
+                true_traj = np.stack(true_traj, axis=0)
+                true_actions = np.stack(true_actions, axis=0)[:, 0]
+
+                # Run rollout and plot
+                locs_all = np.stack(locs, axis=0)
+                vars_all = np.stack(covs, axis=0)[:, [0, 1], [0, 1]]
+                print(f'locs_all.shape, covs_all.shape, {locs_all.shape, np.stack(covs, axis=0).shape}')
+                steps = np.arange(locs_all.shape[0])
+
+                current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                plot_pendulum_rollouts(steps,
+                                       true_traj,
+                                       locs_all,
+                                       vars_all,
+                                       policy=eq_agent.policy,
+                                       true_actions=true_actions,
+                                       plot_path=f'{root_dir}/plots/',
+                                       plot_prefix=f'optim-{episode}-{current_time}')
+
+                true_cost = true_cost / num_steps_per_episode
+                print(f"Current cost: {cost}, true cost: {true_cost}")
 
                 return cost
 
@@ -510,7 +558,7 @@ def experiment(num_random_episodes,
                                                               eq_agent.policy.policy.rbf_weights,
                                                               ],
                                                           explicit=False,
-                                                          max_iterations=100)
+                                                          max_iterations=150)
 
                 print(f"Policy loss: {loss},"
                       f"converged: {converged}, "
@@ -578,6 +626,8 @@ def experiment(num_random_episodes,
 
                     env.reset()
                     env.env.env.state = init_state.numpy()[0]
+                    state = init_state.numpy()[0]
+
                     true_actions = []
                     true_traj.append(init_state.numpy()[0])
 
