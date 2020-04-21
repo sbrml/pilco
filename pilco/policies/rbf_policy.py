@@ -53,36 +53,24 @@ class RBFPolicy(Policy):
     def reset(self):
 
         # Sample policy parameters from standard normal
-        rbf_sin_locs = tf.random.uniform(shape=(self.num_rbf_features,),
-                                         minval=-1.,
-                                         maxval=1.,
-                                         dtype=self.dtype)
+        rbf_theta_locs = tf.random.normal(shape=(self.num_rbf_features,),
+                                          mean=-np.pi,
+                                          stddev=2 * np.pi,
+                                          dtype=self.dtype)
 
-        rbf_cos_locs = tf.random.uniform(shape=(self.num_rbf_features,),
-                                         minval=-1.,
-                                         maxval=1.,
-                                         dtype=self.dtype)
+        rbf_theta_dot_locs = tf.random.normal(shape=(self.num_rbf_features,),
+                                          mean=0.,
+                                          stddev=4.,
+                                          dtype=self.dtype)
 
-        rbf_theta_locs = tf.random.uniform(shape=(self.num_rbf_features,),
-                                           minval=0.,
-                                           maxval=0.,
-                                           dtype=self.dtype)
-
-        rbf_theta_dot_locs = tf.random.uniform(shape=(self.num_rbf_features,),
-                                               minval=-8.,
-                                               maxval=8.,
-                                               dtype=self.dtype)
-
-        self.rbf_locs.assign(tf.stack([rbf_sin_locs,
-                                       rbf_cos_locs,
-                                       rbf_theta_locs,
+        self.rbf_locs.assign(tf.stack([rbf_theta_locs,
                                        rbf_theta_dot_locs], axis=-1))
 
         self.rbf_log_scales.assign(self.num_rbf_features ** -0.5 * tf.ones(shape=(1, self.state_dim), dtype=self.dtype))
 
         rbf_weights_init = tf.random.normal(shape=(self.num_rbf_features,),
                                             mean=0.,
-                                            stddev=1e-2,
+                                            stddev=0.3,
                                             dtype=self.dtype)
         self.rbf_weights.assign(rbf_weights_init)
 
