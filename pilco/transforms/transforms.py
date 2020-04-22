@@ -52,7 +52,6 @@ class MomentMatchingTransform(Transfrom, abc.ABC):
                  dtype=tf.float64,
                  name="moment_matching_transform",
                  **kwargs):
-
         super().__init__(name=name,
                          dtype=dtype,
                          **kwargs)
@@ -82,7 +81,6 @@ class IdentityTransform(MomentMatchingTransform):
                  dtype=tf.float64,
                  name="identity_mm_transform",
                  **kwargs):
-
         super().__init__(dtype=dtype,
                          name=name,
                          **kwargs)
@@ -100,7 +98,6 @@ class ReplicationTransform(MomentMatchingTransform):
                  dtype=tf.float64,
                  name="replication_transform",
                  **kwargs):
-
         super().__init__(dtype=dtype,
                          name=name,
                          **kwargs)
@@ -171,10 +168,62 @@ class AffineTransform(MomentMatchingTransform):
             self.shift = tf.cast(self.shift, self.dtype)
 
     def match_moments(self, loc, cov, indices):
-        pass
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices,
+                                                                                                   loc.shape[0])
+
+        # Slice loc and cov
+        loc_a = tf.gather_nd(loc, indices_a)
+        loc_b = tf.gather_nd(loc, indices_b)
+
+        cov_aa = tf.gather_nd(cov, indices_aa)
+        cov_ab = tf.gather_nd(cov, indices_ab)
+        cov_ba = tf.gather_nd(cov, indices_ba)
+        cov_bb = tf.gather_nd(cov, indices_bb)
+
+        affine_loc_a = self.scale * loc_a + self.shift
+
+        affine_cov_aa = self.scale * self.scale * cov_aa
+
+        affine_cov_ab = self.scale * cov_ab
+        affine_cov_ba = self.scale * cov_ba
+
+        # Put location together
+        affine_loc = tf.scatter_nd(indices_a, affine_loc_a, shape=loc.shape)
+        affine_loc = tf.tensor_scatter_nd_update(affine_loc, indices_b, loc_b)
+
+        # Put covariance terms together
+        affine_cov = tf.scatter_nd(indices_aa, affine_cov_aa, shape=cov.shape)
+
+        affine_cov = tf.tensor_scatter_nd_update(affine_cov,
+                                                 indices_ab,
+                                                 affine_cov_ab)
+
+        affine_cov = tf.tensor_scatter_nd_update(affine_cov,
+                                                 indices_ba,
+                                                 affine_cov_ba)
+
+        affine_cov = tf.tensor_scatter_nd_update(affine_cov,
+                                                 indices_bb,
+                                                 cov_bb)
+
+        return affine_loc, affine_cov
 
     def call(self, tensor, indices):
-        pass
+
+        tensor = tf.convert_to_tensor(tensor)
+        tensor = tf.cast(tensor, self.dtype)
+
+        indices = tf.convert_to_tensor(indices)
+        indices = tf.cast(indices, tf.int32)
+
+        indices_a, _ = get_loc_cov_indices(indices, tensor.shape[0], cov=False)
+
+        tensor_a = tf.gather_nd(tensor, indices_a)
+
+        tensor_a = self.shift + self.scale * tensor_a
+        tensor = tf.tensor_scatter_nd_update(tensor, indices_a, tensor_a)
+
+        return tensor
 
 
 class AbsoluteValueTransform(MomentMatchingTransform):
@@ -183,16 +232,15 @@ class AbsoluteValueTransform(MomentMatchingTransform):
                  dtype=tf.float64,
                  name="absolute_value_transform",
                  **kwargs):
-
         super().__init__(dtype=dtype,
                          name=name,
                          **kwargs)
 
     def match_moments(self, loc, cov, indices):
-
         # TODO: make this return the proper covariance matrix
         # Get indices to slice loc and cov by
-        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, loc.shape[0])
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices,
+                                                                                                   loc.shape[0])
 
         # Slice loc and cov
         loc_a = tf.gather_nd(loc, indices_a)
@@ -247,10 +295,9 @@ class AbsoluteValueTransform(MomentMatchingTransform):
 
         return abs_loc, abs_cov
 
-
     def call(self, tensor, indices):
-
-        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices, tensor.shape[0])
+        indices_a, indices_b, indices_aa, indices_bb, indices_ab, indices_ba = get_loc_cov_indices(indices,
+                                                                                                   tensor.shape[0])
 
         tensor_a = tensor[indices_a]
         tensor_b = tensor[indices_b]
@@ -347,11 +394,11 @@ class SineTransformWithPhase(MomentMatchingTransform):
         # Perform slicing for the mean
         # The rest of the code is expecting the means as row vectors
         mean_a = tf.gather_nd(loc, indices_a)[None, :]
-        #print("mean a ", mean_a)
+        # print("mean a ", mean_a)
 
         # Shift the selected mean by the phase
         mean_a = mean_a + self.phase
-        #print("mean a plus pi/2", mean_a)
+        # print("mean a plus pi/2", mean_a)
 
         # The rest of the code is expecting the means as row vectors
         mean_b = tf.gather_nd(loc, indices_b)[None, :]
@@ -461,4 +508,3 @@ class CosineTransform(SineTransformWithPhase):
                          dtype=dtype,
                          name=name,
                          **kwargs)
-

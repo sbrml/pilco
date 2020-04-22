@@ -45,7 +45,7 @@ def plot_pendulum_rollouts(steps,
     plt.xlabel('step')
     plt.ylabel('theta')
     plt.grid(True)
-    plt.ylim([-5 * np.pi, 3 * np.pi])
+    plt.ylim([-5 * np.pi, 5 * np.pi])
 
     plt.subplot(222)
     plt.plot(steps, true_thetadots, '--', color='black')
@@ -60,7 +60,7 @@ def plot_pendulum_rollouts(steps,
     plt.grid(True)
     plt.ylim([-10., 10])
 
-    s_linspace = tf.cast(tf.linspace(-4 * np.pi, 2 * np.pi, s_points), dtype=tf.float64)
+    s_linspace = tf.cast(tf.linspace(-4 * np.pi, 3 * np.pi, s_points), dtype=tf.float64)
 
     s_dot_linspace = tf.cast(tf.linspace(-8., 8., s_dot_points), dtype=tf.float64)
 
@@ -73,10 +73,10 @@ def plot_pendulum_rollouts(steps,
     actions = tf.stack([policy(point) for point in grid], axis=0)
     actions = tf.reshape(actions, (s_dot_points, s_points))
 
-    centroids = policy.eq_policy.policy.rbf_locs().numpy()
+    centroids = policy.policy.rbf_locs().numpy()
 
-    centroid_thetas = np.arctan2(centroids[:, 0], centroids[:, 1])
-    centroid_theta_dots = centroids[:, 3]
+    centroid_thetas = centroids[:, 0] #np.arctan2(centroids[:, 0], centroids[:, 1])
+    centroid_theta_dots = centroids[:, 1]
 
     plt.subplot(223)
     contour = plt.contourf(s_grid, s_dot_grid, actions, cmap='coolwarm', alpha=0.5)
@@ -87,7 +87,7 @@ def plot_pendulum_rollouts(steps,
     plt.colorbar(contour)
     plt.xlabel("Theta")
     plt.ylabel("Theta dot")
-    plt.xlim([-4. * np.pi, 2. * np.pi])
+    plt.xlim([-4. * np.pi, 3. * np.pi])
     plt.ylim([-8., 8.])
 
     plt.subplot(224)

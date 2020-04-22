@@ -1,4 +1,5 @@
 # Custom ignores
+saved_agents/
 gifs_
 plots_
 .idea
