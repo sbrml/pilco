@@ -2,4 +2,4 @@
 
 Learn to balance baby.
 
-![Blance](gifs/pendulum-test-20200421-164002.gif)
+![Balance](good_gifs/pendulum-test-20200422-081051.gif)

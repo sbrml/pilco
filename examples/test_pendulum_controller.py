@@ -5,13 +5,12 @@ import datetime
 from tqdm import trange
 
 from pilco.environments import Environment
-from pilco.policies import Policy, RBFPolicy, TransformedPolicy
-from pilco.transforms import SineTransform, SineTransformWithPhase, AbsoluteValueTransform, \
+from pilco.policies import RBFPolicy, TransformedPolicy
+from pilco.transforms import SineTransform, AbsoluteValueTransform, \
     ChainedMomentMatchingTransfom, AffineTransform
 from pilco.costs import EQCost
 from pilco.agents import EQGPAgent
 
-import matplotlib.pyplot as plt
 from sacred import Experiment
 
 import imageio
@@ -36,7 +35,7 @@ def config():
 
     root_dir = "/Users/gergelyflamich/Documents/sbrml/pilco/"
 
-    agent_path = f"{root_dir}/saved_agents/20200421-112529/episode_2"
+    agent_path = f"{root_dir}/saved_agents/20200421-232345/episode_5"
 
 
 @experiment.automain
@@ -75,7 +74,7 @@ def experiment(sub_sampling_factor,
                                                    action_dim=1,
                                                    num_rbf_features=num_rbf_features,
                                                    dtype=dtype),
-                                  transform=SineTransform(-2, 2))
+                                  transform=SineTransform(-1.4, 1.4))
 
     eq_agent = EQGPAgent(in_state_dim=2,
                          out_state_dim=2,
@@ -85,11 +84,9 @@ def experiment(sub_sampling_factor,
                          dtype=dtype,
                          replay_buffer_limit=agent_replay_buffer_limit)
 
-
     eq_agent.load_weights(f"{agent_path}/model")
 
     print("Agent loaded!")
-
 
     init_state = tf.constant([[-np.pi, 0.]], dtype=tf.float64)
 
@@ -99,7 +96,7 @@ def experiment(sub_sampling_factor,
 
     frames = []
 
-    for step in trange(100):
+    for step in trange(200):
         frames.append(env.env.render(mode='rgb_array'))
 
         action = eq_agent.act(state)
