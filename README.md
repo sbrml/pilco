@@ -24,7 +24,7 @@ Rename this repo. Candidates:
 - Moment matching
 
 ## Profiling
-- Find a profiler
+- I have no clue how profiling works, let's research into how we should go about it
 
 ## Write tests (especially Monte Carlo - maybe one test for all moment matching)
 
