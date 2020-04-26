@@ -58,7 +58,7 @@ def config():
     # Optimsation exit criterion tolerance
     tolerance = 0.
 
-    root_dir = "/Users/gergelyflamich/Documents/sbrml/pilco/"
+    root_dir = "../"
 
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     save_dir = f"{root_dir}/saved_agents/{current_time}/"
@@ -133,6 +133,7 @@ def experiment(num_random_episodes,
                agent_replay_buffer_limit,
                root_dir,
                save_dir):
+
     dtype = tf.float64
 
     # Create pendulum environment and reset
@@ -249,6 +250,7 @@ def experiment(num_random_episodes,
 
             # Assign best parameters
             eq_agent.eq_coeff.assign(best_eq_coeff)
+            print(best_eq_noise_coeff)
             eq_agent.eq_noise_coeff.assign(best_eq_noise_coeff)
             eq_agent.eq_scales.assign(best_eq_scales)
 
