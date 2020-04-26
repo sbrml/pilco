@@ -1,5 +1,8 @@
 # pilco
 
+[![Build Status](https://travis-ci.org/sbrml/pilco.svg?branch=master)](https://travis-ci.org/sbrml/pilco)
+[![Coverage Status](https://coveralls.io/repos/github/sbrml/pilco/badge.svg?branch=master)](https://coveralls.io/github/sbrml/pilco?branch=master)
+
 Learn to balance baby.
 
 ![Balance](good_gifs/pendulum-test-20200422-081051.gif)
