@@ -11,7 +11,7 @@ install:
 
 # Run unit test
 script:
-  - pytest -v --cov=not_tf_opt --cov-report term-missing
+  - pytest tests/.
 
 after_success:
   - coveralls
