@@ -1,0 +1,17 @@
+language: python
+
+python:
+  - "3.6"
+  - "3.7"
+
+# Install dependencies
+install:
+  - pip install --upgrade pip setuptools wheel
+  - pip install --no-cache-dir -U -r requirements.txt
+
+# Run unit test
+script:
+  - pytest -v --cov=not_tf_opt --cov-report term-missing
+
+after_success:
+  - coveralls
