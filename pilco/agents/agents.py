@@ -7,15 +7,12 @@ import numpy as np
 
 from pilco.policies.policy import Policy
 from pilco.costs.costs import Cost
+from pilco.errors import AgentError
 
 import not_tf_opt as ntfo
 from not_tf_opt.variables import UnconstrainedVariable, BoundedVariable
 
 tfd = tfp.distributions
-
-
-class AgentError(Exception):
-    pass
 
 
 class Agent(tf.keras.Model, ABC):

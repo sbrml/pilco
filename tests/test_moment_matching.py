@@ -1,12 +1,11 @@
+from pilco.errors import *
+from pilco.policies import RBFPolicy
+
+from pilco.utils import assert_near
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
-
-from pilco.policies import RBFPolicy
-
-
-class MomentMatchingError(Exception):
-    pass
 
 
 def test_mm_rbf_policy():
@@ -50,12 +49,8 @@ def test_mm_rbf_policy():
                                                       covariance_matrix=cov)
 
     # Sample states from distribution over states and pass through policy
-    s = [state_dist.sample() for i in range(num_mc_samples)]
-    u = [rbf_policy(s_) for s_ in s]
-
-    # Convert states and actions to tensors
-    s = tf.convert_to_tensor(s)
-    u = tf.convert_to_tensor(u)
+    s = state_dist.sample(num_mc_samples)
+    u = tf.stack([rbf_policy(s_) for s_ in s], axis=0)
 
     # Concatenate state-action samples to compute the overall mean
     su_samples = tf.concat([s, u[..., None]], axis=-1)
@@ -65,10 +60,6 @@ def test_mm_rbf_policy():
     mc_cov = (tf.einsum('ij, ik -> jk', su_samples, su_samples) / su_samples.shape[0])
     mc_cov = mc_cov - (tf.einsum('ij, ik -> jk', mc_mean, mc_mean) / mc_mean.shape[0])
 
-    abs_diff_mean = tf.reduce_max(tf.abs(mm_mean - mc_mean))
-    abs_diff_cov = tf.reduce_max(tf.abs(mm_cov - mc_cov))
-
-    if abs_diff_mean > mean_tolerance or abs_diff_cov > cov_tolerance:
-
-        raise MomentMatchingError(f'Moment matching and Monte Carlo answers do not'
-                                  f' agree within tolerance for RBFPolicy.')
+    # Assert error if MM and MC answers are not close
+    assert_near(mm_mean, mc_mean, atol=mean_tolerance, rtol=None)
+    assert_near(mm_cov, mc_cov, atol=mean_tolerance, rtol=None)
