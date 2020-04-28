@@ -4,6 +4,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def assert_near(x, y, atol=None, rtol=None):
+    assert tf.debugging.assert_near(x, y, rtol=rtol, atol=atol) is None
+
+
 def get_complementary_indices(indices, size):
 
     indices = tf.convert_to_tensor(indices)
