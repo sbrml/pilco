@@ -4,7 +4,7 @@ import datetime
 import numpy as np
 
 from pilco.environments import Environment
-from pilco.policies import RBFPolicy, TransformedPolicy
+from pilco.policies import PendulumEQPolicy, TransformedPolicy
 from pilco.transforms import SineTransform, AbsoluteValueTransform, \
     ChainedMomentMatchingTransfom, AffineTransform
 from pilco.costs import EQCost
@@ -25,13 +25,14 @@ experiment = Experiment('pendulum-experiment')
 
 @experiment.config
 def config():
+
     # Lengthscale for gaussian cost
     target_scale = [[1.]]
 
     agent_replay_buffer_limit = 240
 
-    # Number of rbf features in policy
-    num_rbf_features = 50
+    # Number of eq features in policy
+    num_eq_features = 50
 
     # Subsampling factor
     sub_sampling_factor = 2
@@ -58,10 +59,10 @@ def config():
     # Optimsation exit criterion tolerance
     tolerance = 0.
 
-    root_dir = "../"
+    # Root directory for saving
+    root_dir = "./pendulum/"
 
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    save_dir = f"{root_dir}/saved_agents/{current_time}/"
 
 
 def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
@@ -125,14 +126,14 @@ def experiment(num_random_episodes,
                num_steps_per_random_episode,
                sub_sampling_factor,
                target_scale,
-               num_rbf_features,
+               num_eq_features,
                optimisation_horizon,
                dynamics_optimisation_restarts,
                num_episodes,
                num_steps_per_episode,
                agent_replay_buffer_limit,
                root_dir,
-               save_dir):
+               current_time):
 
     dtype = tf.float64
 
@@ -159,10 +160,8 @@ def experiment(num_random_episodes,
                      target_dim=1,
                      dtype=dtype)
 
-    eq_policy = TransformedPolicy(policy=RBFPolicy(state_dim=2,
-                                                   action_dim=1,
-                                                   num_rbf_features=num_rbf_features,
-                                                   dtype=dtype),
+    eq_policy = TransformedPolicy(policy=PendulumEQPolicy(num_eq_features=num_eq_features,
+                                                          dtype=dtype),
                                   transform=SineTransform(-1.4, 1.4))
 
     eq_agent = EQGPAgent(in_state_dim=2,
@@ -328,7 +327,7 @@ def experiment(num_random_episodes,
                                    vars_all,
                                    policy=eq_agent.policy,
                                    true_actions=true_actions,
-                                   plot_path=f'{root_dir}/plots/',
+                                   plot_path=f'{root_dir}/plots',
                                    plot_prefix=f'optim-{episode}-{current_time}')
 
             true_cost = true_cost / num_steps_per_episode
@@ -338,9 +337,9 @@ def experiment(num_random_episodes,
 
         while True:
             loss, converged, diverged = ntfo.minimize(function=expected_total_cost,
-                                                      vs=[eq_agent.policy.policy.rbf_locs,
-                                                          eq_agent.policy.policy.rbf_log_scales,
-                                                          eq_agent.policy.policy.rbf_weights,
+                                                      vs=[eq_agent.policy.policy.eq_locs,
+                                                          eq_agent.policy.policy.eq_log_scales,
+                                                          eq_agent.policy.policy.eq_weights,
                                                           ],
                                                       explicit=False,
                                                       max_iterations=150)
@@ -374,4 +373,4 @@ def experiment(num_random_episodes,
 
         imageio.mimwrite(f'{root_dir}/gifs/pendulum-{episode}.gif', frames)
 
-        eq_agent.save_weights(f"{save_dir}/episode_{episode}/model")
+        eq_agent.save_weights(f"{root_dir}/saved_agents/{current_time}/episode_{episode}/model")

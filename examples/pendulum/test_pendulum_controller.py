@@ -20,6 +20,7 @@ experiment = Experiment('test-pendulum-controller')
 
 @experiment.config
 def config():
+
     # Lengthscale for gaussian cost
     target_scale = [[1.]]
 

@@ -77,7 +77,7 @@ def plot_pendulum_rollouts(steps,
     actions = tf.stack([policy(point) for point in grid], axis=0)
     actions = tf.reshape(actions, (s_dot_points, s_points))
 
-    centroids = policy.policy.rbf_locs().numpy()
+    centroids = policy.policy.eq_locs().numpy()
 
     centroid_thetas = centroids[:, 0] #np.arctan2(centroids[:, 0], centroids[:, 1])
     centroid_theta_dots = centroids[:, 1]
