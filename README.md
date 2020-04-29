@@ -19,6 +19,8 @@ Rename this repo. Candidates:
 - Define documentation layout
 - Remove all hacky stuff, like hard coded tensors
 - Clean up pendulum.py: learning-dynamics, objective, optimisation, plotting
+- Batching in calls of our agents, policies and costs.
+- Feasible/Initialisation space - this needs more specification, included it so we don't forget.
 
 ## Example notebooks
 - Pendulum notebook

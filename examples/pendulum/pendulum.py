@@ -327,7 +327,7 @@ def experiment(num_random_episodes,
                                    vars_all,
                                    policy=eq_agent.policy,
                                    true_actions=true_actions,
-                                   plot_path=f'{root_dir}/plots',
+                                   plot_path=f'{root_dir}/plots/',
                                    plot_prefix=f'optim-{episode}-{current_time}')
 
             true_cost = true_cost / num_steps_per_episode
