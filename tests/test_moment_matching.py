@@ -22,14 +22,14 @@ def test_mm_eq_policy():
     """
 
     # Set random seed
-    tf.random.set_seed(0)
+    tf.random.set_seed(1)
 
     # Number of MC samples
-    num_mc_samples = int(5e4)
+    num_mc_samples = int(1e4)
 
     # Tolerances for mean and covariance estimates
     mean_tolerance = 1e-1
-    cov_tolerance = 2e-1
+    cov_tolerance = 1e-1
 
     state_dims = [1, 5, 10]
     action_dims = [1, 5, 10]
@@ -72,11 +72,6 @@ def test_mm_eq_policy():
         mc_cov = (tf.einsum('ij, ik -> jk', su_samples, su_samples) / su_samples.shape[0])
         mc_cov = mc_cov - (tf.einsum('ij, ik -> jk', mc_mean, mc_mean) / mc_mean.shape[0])
 
-        print(state_dim, action_dim, num_eq_features)
-        print(tf.reduce_max(tf.abs(mm_mean - mc_mean)))
-        print(tf.reduce_max(tf.abs(mm_cov - mc_cov)))
         # Assert error if MM and MC answers are not close
         assert_near(mm_mean, mc_mean, atol=mean_tolerance, rtol=None)
         assert_near(mm_cov, mc_cov, atol=cov_tolerance, rtol=None)
-
-test_mm_eq_policy()
