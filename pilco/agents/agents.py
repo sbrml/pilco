@@ -47,8 +47,8 @@ class Agent(tf.keras.Model, ABC):
         self.policy = policy
 
         # Set cost
-        if not issubclass(cost.__class__, Cost):
-            raise AgentError("Cost must be a subclass of pilco.costs.Cost!")
+        # if not issubclass(cost.__class__, Cost):
+        #     raise AgentError("Cost must be a subclass of pilco.costs.Cost!")
         self.cost = cost
 
         # Initialise variables to hold observed dynamics data
@@ -140,6 +140,7 @@ class Agent(tf.keras.Model, ABC):
         return mean, cov
 
     def _validate_and_convert(self, xs, last_dim):
+
         """
         Convert xs into rank-2 tensor of the right datatype
 

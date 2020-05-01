@@ -105,3 +105,43 @@ def plot_pendulum_rollouts(steps,
     plt.savefig(f'{plot_path}/{plot_prefix}.png')
     plt.close()
 
+
+def chol_update_by_block_lu(L, a, b, tol=1e-12):
+
+    """
+    Computes the updated cholesky factorisation of a matrix F, where:
+
+        F = M MT = [[L LT, a],
+                    [aT,   b]]
+
+    F is assumed to be positive-definite. This uses the identity:
+
+        M = [[L,         0],
+             [(L^-1 a)T, c]]
+
+    where c^2 = b - (L^-1 a)T (L^-1 a).
+
+    :param L: tf.tensor, [..., N, N] lower triangular cholesky factor L
+    :param a: tf.tensor, [..., N, 1] column-vector-like
+    :param b: tf.tensor, [..., 1, 1] scalar-like
+    :return:
+    """
+
+    # Compute (L^-1 a) and its transpose
+    L_inv_a = tf.linalg.triangular_solve(L, a, lower=True)
+    L_inv_aT = tf.linalg.matrix_transpose(L_inv_a)
+
+    # Compute c - add tol because sqrt is not differentiable at origin
+    c = (b - tf.einsum('...ij, ...ij -> ...', L_inv_a, L_inv_a)) ** 0.5
+
+    # Join matrices up to original matrix
+    print(L.shape, a.shape)
+    print(L_inv_aT.shape, c.shape)
+    M_top = tf.concat([L, tf.zeros_like(a)], axis=-1)
+    M_bottom = tf.concat([L_inv_aT, c], axis=-1)
+
+    print(M_top.shape, M_bottom.shape)
+
+    M = tf.concat([M_top, M_bottom], axis=-2)
+
+    return M
