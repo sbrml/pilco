@@ -129,19 +129,25 @@ def chol_update_by_block_lu(L, a, b, tol=1e-12):
 
     # Compute (L^-1 a) and its transpose
     L_inv_a = tf.linalg.triangular_solve(L, a, lower=True)
-    L_inv_aT = tf.linalg.matrix_transpose(L_inv_a)
+    L_inv_aT = swap_trailing_axes(L_inv_a)
 
     # Compute c - add tol because sqrt is not differentiable at origin
-    c = (b - tf.einsum('...ij, ...ij -> ...', L_inv_a, L_inv_a)) ** 0.5
+    c = (b - tf.einsum('...ij, ...ij -> ...', L_inv_a, L_inv_a)[:, :, None, None]) ** 0.5
 
     # Join matrices up to original matrix
-    print(L.shape, a.shape)
-    print(L_inv_aT.shape, c.shape)
     M_top = tf.concat([L, tf.zeros_like(a)], axis=-1)
     M_bottom = tf.concat([L_inv_aT, c], axis=-1)
-
-    print(M_top.shape, M_bottom.shape)
 
     M = tf.concat([M_top, M_bottom], axis=-2)
 
     return M
+
+
+def swap_trailing_axes(tensor):
+
+    dim = len(tensor.shape)
+    permutation = tuple(range(dim - 2)) + (dim - 1, dim - 2)
+
+    tensor = tf.transpose(tensor, permutation)
+
+    return tensor

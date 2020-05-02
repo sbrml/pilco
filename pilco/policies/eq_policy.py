@@ -254,3 +254,49 @@ class PendulumEQPolicy(EQPolicy):
                                            stddev=0.3,
                                            dtype=self.dtype)
         self.eq_weights.assign(eq_weights_init)
+
+
+class BatchedEQPolicy(EQPolicy):
+
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 num_eq_features,
+                 dtype,
+                 name='eq_policy',
+                 **kwargs):
+
+
+        super().__init__(state_dim=state_dim,
+                         action_dim=action_dim,
+                         num_eq_features=num_eq_features,
+                         dtype=dtype)
+
+
+    def call(self, state):
+
+        """
+        :param state: (M, S)
+        :return:
+        """
+
+        # Convert state to tensor and reshape to be rank 2
+        state = tf.convert_to_tensor(state, dtype=self.dtype)
+
+        # Compute quadratic form and exponentiate for each component
+        diff_state_mui = state[:, None, :] - self.eq_locs()[None, :, :]
+        quad = tf.einsum('mik, lk, mik -> mi',
+                         diff_state_mui,
+                         self.eq_scales ** -1,
+                         diff_state_mui)
+
+        exp_quad = tf.math.exp(-0.5 * quad)
+
+        # RBF output is the weighted sum of eq components
+        eq = tf.einsum('i, mi -> m',
+                        self.eq_weights(),
+                        exp_quad)
+
+        eq = eq[:, None]
+
+        return eq

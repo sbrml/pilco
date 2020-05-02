@@ -1,8 +1,11 @@
+from pilco.agents import Agent
+from pilco.errors import AgentError
+from pilco.utils import chol_update_by_block_lu
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
 
-from pilco.agents import Agent
 
 class GPExplorationAgent(Agent):
 
@@ -14,7 +17,7 @@ class GPExplorationAgent(Agent):
                  policy,
                  dtype,
                  replay_buffer_limit=None,
-                 name='agent',
+                 name='gp_exploration_agent',
                  **kwargs):
 
         super().__init__(in_state_dim=state_dim,
@@ -34,15 +37,20 @@ class GPExplorationAgent(Agent):
         self._gp_covs = gp_covs
 
         self.state_dim = state_dim
+        self._log_noise = tf.Variable(tf.constant(-6., dtype=self.dtype))
+
+        #TODO: ADD MEAN FUNCTIONALITY - CURRENTLY ZERO MEAN
 
 
     def act(self, state):
         return self.policy(state)
 
 
-    def rollout(self, state_dist, num_rollouts, horizon):
+    def rollout(self, state_dist, num_rollouts, horizon, recondition):
+
         """
         Input initial state distribution.
+
         :return:
             Sampled rollouts
             Posterior GP mean and cov (of observed data)
@@ -50,52 +58,167 @@ class GPExplorationAgent(Agent):
             KL divergence between posterior GPs
         """
 
-        # Compute initial covariance matrices for each GP
-        init_covs = self.gp_covs(self.dynamics_inputs, self.dynamics_inputs)
+        # Compute initial covariance matrices for each GP (S, N, N)
+        init_covs = self.gp_covs(self.dynamics_inputs, noise=True)
 
-        # Add the noise diagonal and compute choleskies
-        init_covs_chol = tf.linalg.cholesky(init_covs)
+        # Compute choleskies and tile up for each Monte Carlo rollout (M, S, N, N)
+        covs_chol = tf.linalg.cholesky(init_covs)
+        covs_chol = tf.tile(covs_chol[None, :, :, :], (num_rollouts, 1, 1, 1))
 
         # Tile inputs to roll out in parallel (M, S + A, N)
-        inputs = tf.transpose(self.dynamics_outputs, (1, 0))
-        inputs = tf.tile(self.dynamics_inputs[None, :, :], (num_rollouts, 1, 1))
+        inputs = tf.transpose(self.dynamics_inputs, (1, 0))
+        inputs = tf.tile(inputs[None, :, :], (num_rollouts, 1, 1))
 
-        # Tile outputs to roll out in parallel (M, S, N)
+        # Tile outputs to roll out in parallel (M, S, N, 1)
         outputs = tf.transpose(self.dynamics_outputs, (1, 0))
-        outputs = tf.tile(self.dynamics_outputs[None, :, :], (num_rollouts, 1, 1))
+        outputs = tf.tile(outputs[None, :, :, None], (num_rollouts, 1, 1, 1))
 
-        # Sample initial state for every rollout
+        # Sample initial state for every rollout (M, S, 1)
         state = state_dist.sample(num_rollouts)[:, :, None]
+
+        states = [state]
 
         # Do rollouts
         for h in range(horizon):
 
-            action = self.policy(state)
+            # Compute action from current state (M, A, 1)
+            action = self.policy(state[:, :, 0])[:, :, None]
+
+            # Concatenate current state and action (M, S + A, 1)
             state_action = tf.concat([state, action], axis=1)
 
-            # Get mean and covariance matrices using covariance cholesky
-            K_data_data = [gp_cov(inputs, inputs) for gp_cov in self.gp_covs]
-            K_star_data = [gp_cov(state_action, inputs) for gp_cov in self.gp_covs]
-            K_star_star = [gp_cov(state_action, state_action) for gp_cov in self.gp_covs]
+            # Append state-action to inputs (M, S + A, N + 1)
+            inputs = tf.concat([inputs, state_action], axis=2)
 
-            # Sample next state
-            state_delta = tfd.MultivariateNormalTriL(loc=None,
-                                                     scale_tril=None)
+            # Get covariance matrix (M, S, N + 1 + H, N + 1 + H)
+            K_full = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=True)
+            K_full = tf.transpose(K_full, (1, 0, 2, 3))
 
-            # Update covariance cholesky
+            # Split into submatrices
+            # (M, S, N, N)
+            K_data_data_noise = K_full[:, :, :-1, :-1]
+            # (M, S, 1, N)
+            K_star_data = K_full[:, :, -1:, :-1]
+            # (M, S, N, 1)
+            K_data_star = K_full[:, :, :-1, -1:]
+            # (M, S, 1, 1)
+            K_star_star_noise = K_full[:, :, -1:, -1:]
+
+            # Compute mean of next datum (M, S, 1, 1)
+            mean = tf.einsum('msij, msjk -> msik',
+                             K_star_data,
+                             tf.linalg.cholesky_solve(covs_chol, outputs))
+
+            # Compute mean of next datum (M, S, 1, 1)
+            var = K_star_star_noise - tf.einsum('msij, msjk -> msik',
+                                                K_star_data,
+                                                tf.linalg.cholesky_solve(covs_chol, K_data_star))
+
+            # Sample from normal (M, S, 1, 1)
+            state_delta = tfd.Normal(loc=mean, scale=(var + 1e-12) ** 0.5).sample()
+            state = state + state_delta[:, :, 0]
+
+            states.append(state)
+
+            if recondition:
+
+                # Append new datum to outputs (M, S, N + 1, 1)
+                outputs = tf.concat([outputs, state_delta], axis=2)
+
+                # Cholesky of new covariance matrix (M, S, N + 1, N + 1)
+                covs_chol = chol_update_by_block_lu(L=covs_chol,
+                                                    a=K_data_star,
+                                                    b=K_star_star_noise)
+            else:
+                inputs = inputs[:, :, :-1]
+
+
+        states = tf.stack(states, axis=-1)
+
+        return inputs, outputs[..., 0], states
 
         # Compute KL divergence
 
 
-    def gp_covs(self, x1, x2, noise=True):
 
-        covs = tf.stack([gp_cov(x1, x2) for gp_cov in self._gp_covs])
+    def gp_covs(self, x1, x2=None, noise=True):
+
+        """
+        Computes the covariance between different input locations. If x2 is not
+        passed, the covariance between x1 and itself is computed. Supports
+        batch calculation of covariances over leading dimensions.
+
+        :param x1: tf.tensor, first tensor of inputs (..., N1, D)
+        :param x2: tf.tensor, second tensor of inputs (..., N2, D)
+        :param noise: bool, whether to include the diagonal noise
+        :return:
+            If x1 with shape (..., N1, D) is passed, returns tensor of shape
+            (..., N1, N1). If x2 with shape (..., N2, D) is passed in addition
+            to x1, returns tf.tensor of shape (..., N1, N2)
+        """
+
+        # Check that x1 has 2 or more dimensions
+        if tf.rank(x1) <= 1:
+            raise AgentError(f'{type(self)}.gp_covs expected x1 to have more'
+                             f' than two dimensions, found shape {x1.shape}.')
+
+        # Check that x1 and x2 have the same rank and batch dimensions
+        if (x2 is not None) and (x1.shape[:-2] != x2.shape[:-2] or tf.rank(x1) != tf.rank(x2)):
+            raise AgentError(f'{type(self)}.gp_covs expected x1 and x2 to'
+                             f' have the same number of dimensions, found'
+                             f' shapes {x1.shape} and {x2.shape}.')
+
+        batch_dims = len(x1.shape) - 2
+
+        if x2 is None:
+            covs = tf.stack([gp_cov(x1) for gp_cov in self._gp_covs])
+
+        else:
+            x2 = x2[batch_dims * (0,)]
+            covs = tf.stack([gp_cov(x1, x2) for gp_cov in self._gp_covs])
 
         if noise:
-            covs = covs + tf.eye(covs.shape[-1])
+            eye_shape = batch_dims * (1,) + 2 * (covs.shape[-1],)
+            eye = tf.reshape(tf.eye(covs.shape[-1], dtype=self.dtype), eye_shape)
+
+            covs = covs + self.noise ** 2 * eye
+
+        return covs
 
 
-    @abstractmethod
+    @property
+    def noise(self):
+        return tf.math.exp(self._log_noise)
+
+
+#    def gp_covs(self, x1, x2=none, noise=true):
+#
+#        if (x2 is not None) and (x1.rank != x2.rank or x1.rank != 2):
+#            raise AgentError(f'{type(self)}.gp_covs expected x1 and x2 to'
+#                             f' both have two dimensions, found'
+#                             f' shapes {x1.shape} and {x2.shape}.')
+#
+#        elif x1.rank <= 1:
+#            raise AgentError(f'{type(self)}.gp_covs expected x1 to have'
+#                             f' two or more dimensions, found shape {x1.rank}.')
+#
+#        if x2 is None:
+#            covs = tf.stack([gp_cov(x1) for gp_cov in self._gp_covs])
+#
+#        else:
+#            covs = tf.stack([gp_cov(x1, x2) for gp_cov in self._gp_covs])
+#
+#
+#        if noise:
+#
+#            eye_shape = (len(x1.shape) - 2) * (1,) + 2 * (covs.shape[-1],)
+#            eye = tf.reshape(tf.eye(covs.shape[-1]), eye_shape)
+#
+#            covs = covs + self.noise ** 2 * eye
+#
+#        return covs
+
+
     def train_dynamics_model(self, **kwargs):
         pass
 
