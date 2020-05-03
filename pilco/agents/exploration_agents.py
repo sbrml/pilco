@@ -176,6 +176,7 @@ class GPExplorationAgent(Agent):
             kl_divergence = normal_1.kl_divergence(normal_2)
             kl_divergence = tf.reduce_mean(kl_divergence, axis=0)
             kl_divergence = tf.reduce_sum(kl_divergence)
+            kl_divergence = kl_divergence / Sigma_2.shape[-1]
 
             return inputs, outputs[..., 0], states, kl_divergence
 
