@@ -1,8 +1,8 @@
-import abc
+from abc import abstractmethod, ABC
 import tensorflow as tf
 
 
-class Policy(tf.Module):
+class Policy(tf.Module, ABC):
 
     def __init__(self, 
                  state_dim,
@@ -19,19 +19,20 @@ class Policy(tf.Module):
         self.dtype = dtype
 
 
-    @abc.abstractmethod
+    @abstractmethod
     def reset(self):
         pass
 
 
-    @abc.abstractmethod
+    @abstractmethod
     def match_moments(self, state_loc, state_cov, joint_result=True):
         pass
 
 
-    @abc.abstractmethod
+    @abstractmethod
     def call(self, state):
         pass
+
 
     def join_covariance_matrices(self, cov_ss, cov_su, cov_uu):
 
