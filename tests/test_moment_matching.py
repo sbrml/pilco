@@ -13,10 +13,10 @@ tfd = tfp.distributions
 def test_mm_eq_policy():
 
     """
-    Test RBFPolicy.moment_matching works correctly, by comparing it against
+    Test EQPolicy.moment_matching works correctly, by comparing it against
     Monte Carlo integration. Given an initial distribution of the state s,
     computes the mean and covariance of the vector [s^T, u^T]^T, where
-    u = rbf_policy(s), using both methods and compares the results.
+    u = eq_policy(s), using both methods and compares the results.
 
     :return:
     """
@@ -46,15 +46,15 @@ def test_mm_eq_policy():
         loc = tf.zeros(state_dim, dtype=tf.float32)
         cov = tf.eye(state_dim, dtype=tf.float32)
 
-        # Define RBF policy and reset
-        rbf_policy = EQPolicy(state_dim=state_dim,
-                              action_dim=action_dim,
-                              num_eq_features=num_eq_features,
-                              dtype=tf.float32)
-        rbf_policy.reset()
+        # Define EQ policy and reset
+        eq_policy = EQPolicy(state_dim=state_dim,
+                             action_dim=action_dim,
+                             num_eq_features=num_eq_features,
+                             dtype=tf.float32)
+        eq_policy.reset()
 
         # Match moments across rbf policy
-        mm_mean, mm_cov = rbf_policy.match_moments(loc, cov)
+        mm_mean, mm_cov = eq_policy.match_moments(loc, cov)
 
         # State distribution to sample from
         state_dist = tfd.MultivariateNormalFullCovariance(loc=loc,
@@ -62,7 +62,7 @@ def test_mm_eq_policy():
 
         # Sample states from distribution over states and pass through policy
         s = state_dist.sample(num_mc_samples)
-        u = tf.stack([rbf_policy(s_) for s_ in s], axis=0)
+        u = tf.stack([eq_policy(s_) for s_ in s], axis=0)
 
         # Concatenate state-action samples to compute the overall mean
         su_samples = tf.concat([s, u[..., None]], axis=-1)
