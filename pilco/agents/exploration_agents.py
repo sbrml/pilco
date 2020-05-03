@@ -136,50 +136,51 @@ class GPExplorationAgent(Agent):
 
         states = tf.stack(states, axis=-1)
 
-        # if recondition:
-        #
-        #     K12 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :],
-        #                        x2=tf.transpose(inputs, (0, 2, 1)), noise=False)
-        #     K12 = tf.transpose(K12, (1, 0, 2, 3))
-        #     K21 = tf.transpose(K12, (0, 1, 3, 2))
-        #     K22 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=False)
-        #     K22 = tf.transpose(K22, (1, 0, 2, 3))
-        #     K22_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=True)
-        #     K22_noise = tf.transpose(K22_noise, (1, 0, 2, 3))
-        #     K11_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :], noise=True)
-        #     K11_noise = tf.transpose(K11_noise, (1, 0, 2, 3))
-        #
-        #     mean_1 = tf.einsum('msij, msjk -> msi',
-        #                        K21,
-        #                        tf.linalg.cholesky_solve(init_covs_chol, outputs[:, :, :-horizon, :]))
-        #
-        #     Sigma_1 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
-        #                                            K21,
-        #                                            tf.linalg.solve(K11_noise, K12))
-        #
-        #     mean_2 = tf.einsum('msij, msjk -> msi',
-        #                        K22,
-        #                        tf.linalg.cholesky_solve(covs_chol, outputs[:, :, :, :]))
-        #
-        #     Sigma_2 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
-        #                                   K22,
-        #                                   tf.linalg.solve(K22_noise, K22))
-        #
-        #     print(tf.linalg.slogdet(Sigma_1))
-        #     print(tf.linalg.slogdet(Sigma_2))
-        #
-        #     Sigma_1_chol = tf.linalg.cholesky(Sigma_1)
-        #     Sigma_2_chol = tf.linalg.cholesky(Sigma_2)
-        #
-        #     normal_1 = tfd.MultivariateNormalTriL(loc=mean_1,
-        #                                           scale_tril=Sigma_1_chol)
-        #
-        #     normal_2 = tfd.MultivariateNormalTriL(loc=mean_2,
-        #                                           scale_tril=Sigma_2_chol)
-        #
-        #     print((normal_1.kl_divergence(normal_2)).shape)
+        if recondition:
 
-        return inputs, outputs[..., 0], states
+            K12 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :],
+                               x2=tf.transpose(inputs, (0, 2, 1)), noise=False)
+            K21 = tf.transpose(K12, (0, 1, 3, 2))
+            K22 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=False)
+            K22 = tf.transpose(K22, (1, 0, 2, 3))
+            K22_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=True)
+            K22_noise = tf.transpose(K22_noise, (1, 0, 2, 3))
+            K11_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :], noise=True)
+            K11_noise = tf.transpose(K11_noise, (1, 0, 2, 3))
+
+            mean_1 = tf.einsum('msij, msjk -> msi',
+                               K21,
+                               tf.linalg.cholesky_solve(init_covs_chol, outputs[:, :, :-horizon, :]))
+
+            Sigma_1 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
+                                                   K21,
+                                                   tf.linalg.solve(K11_noise, K12))
+
+            mean_2 = tf.einsum('msij, msjk -> msi',
+                               K22,
+                               tf.linalg.cholesky_solve(covs_chol, outputs[:, :, :, :]))
+
+            Sigma_2 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
+                                          K22,
+                                          tf.linalg.solve(K22_noise, K22))
+
+            Sigma_1_chol = tf.linalg.cholesky(Sigma_1)
+            Sigma_2_chol = tf.linalg.cholesky(Sigma_2)
+
+            normal_1 = tfd.MultivariateNormalTriL(loc=mean_1,
+                                                  scale_tril=Sigma_1_chol)
+
+            normal_2 = tfd.MultivariateNormalTriL(loc=mean_2,
+                                                  scale_tril=Sigma_2_chol)
+
+            kl_divergence = normal_1.kl_divergence(normal_2)
+            kl_divergence = tf.reduce_mean(kl_divergence, axis=0)
+            kl_divergence = tf.reduce_sum(kl_divergence)
+
+            return inputs, outputs[..., 0], states, kl_divergence
+
+        else:
+            return inputs, outputs[..., 0], states
 
 
 
@@ -216,8 +217,16 @@ class GPExplorationAgent(Agent):
             covs = tf.stack([gp_cov(x1) for gp_cov in self._gp_covs])
 
         else:
-            x2 = x2[batch_dims * (0,)]
-            covs = tf.stack([gp_cov(x1, x2) for gp_cov in self._gp_covs])
+
+            # Flatten over batch dimensions
+            x1 = tf.reshape(x1, (-1,) + tuple(x1.shape[-2:]))
+            x2 = tf.reshape(x2, (-1,) + tuple(x2.shape[-2:]))
+
+            batch_size = x1.shape[0]
+
+            covs = tf.stack([[gp_cov(x1[i], x2[i]) for gp_cov in self._gp_covs]
+                             for i in range(batch_size)])
+
 
         if noise:
             eye_shape = batch_dims * (1,) + 2 * (covs.shape[-1],)
