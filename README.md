@@ -16,6 +16,7 @@ Rename this repo. Candidates:
 
 ## Clean up current code
 - Docstrings - Sphinx
+- [Doctest](https://docs.python.org/3/library/doctest.html)?
 - Define documentation layout
 - Remove all hacky stuff, like hard coded tensors
 - Clean up pendulum.py: learning-dynamics, objective, optimisation, plotting
@@ -34,6 +35,7 @@ Rename this repo. Candidates:
 ## Write tests (especially Monte Carlo - maybe one test for all moment matching)
 
 ## Run on other environments
+- [Deepmind Control suite](https://arxiv.org/pdf/1801.00690.pdf)
 - Cartpole
 - Mountaincar
 - Double pendulum
@@ -49,3 +51,5 @@ Rename this repo. Candidates:
 - Efficient Learning of Dynamics with an information based criterion (IRL)
 - Posterior Sampling for RL
 - Deep PILCO
+- [Embed to control](http://papers.nips.cc/paper/5964-embed-to-control-a-locally-linear-latent-dynamics-model-for-control-from-raw-images.pdf)
+- [PlaNet](https://arxiv.org/pdf/1811.04551.pdf)
