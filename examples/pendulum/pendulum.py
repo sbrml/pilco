@@ -66,6 +66,7 @@ def config():
 
 
 def evaluate_agent_dynamics(agent, env, num_episodes, num_steps, seed):
+
     test_data = sample_transitions_uniformly(env,
                                              num_episodes,
                                              num_steps,

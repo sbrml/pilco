@@ -37,7 +37,7 @@ class GPExplorationAgent(Agent):
         self._gp_covs = gp_covs
 
         self.state_dim = state_dim
-        self._log_noise = tf.Variable(tf.constant(-6., dtype=self.dtype))
+        self._log_noise = tf.Variable(tf.constant(-2., dtype=self.dtype))
 
         #TODO: ADD MEAN FUNCTIONALITY - CURRENTLY ZERO MEAN
 
@@ -62,8 +62,9 @@ class GPExplorationAgent(Agent):
         init_covs = self.gp_covs(self.dynamics_inputs, noise=True)
 
         # Compute choleskies and tile up for each Monte Carlo rollout (M, S, N, N)
-        covs_chol = tf.linalg.cholesky(init_covs)
-        covs_chol = tf.tile(covs_chol[None, :, :, :], (num_rollouts, 1, 1, 1))
+        init_covs_chol = tf.linalg.cholesky(init_covs)
+        init_covs_chol = tf.tile(init_covs_chol[None, :, :, :], (num_rollouts, 1, 1, 1))
+        covs_chol = init_covs_chol[:]
 
         # Tile inputs to roll out in parallel (M, S + A, N)
         inputs = tf.transpose(self.dynamics_inputs, (1, 0))
@@ -135,9 +136,50 @@ class GPExplorationAgent(Agent):
 
         states = tf.stack(states, axis=-1)
 
-        return inputs, outputs[..., 0], states
+        # if recondition:
+        #
+        #     K12 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :],
+        #                        x2=tf.transpose(inputs, (0, 2, 1)), noise=False)
+        #     K12 = tf.transpose(K12, (1, 0, 2, 3))
+        #     K21 = tf.transpose(K12, (0, 1, 3, 2))
+        #     K22 = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=False)
+        #     K22 = tf.transpose(K22, (1, 0, 2, 3))
+        #     K22_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1)), noise=True)
+        #     K22_noise = tf.transpose(K22_noise, (1, 0, 2, 3))
+        #     K11_noise = self.gp_covs(x1=tf.transpose(inputs, (0, 2, 1))[:, :-horizon, :], noise=True)
+        #     K11_noise = tf.transpose(K11_noise, (1, 0, 2, 3))
+        #
+        #     mean_1 = tf.einsum('msij, msjk -> msi',
+        #                        K21,
+        #                        tf.linalg.cholesky_solve(init_covs_chol, outputs[:, :, :-horizon, :]))
+        #
+        #     Sigma_1 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
+        #                                            K21,
+        #                                            tf.linalg.solve(K11_noise, K12))
+        #
+        #     mean_2 = tf.einsum('msij, msjk -> msi',
+        #                        K22,
+        #                        tf.linalg.cholesky_solve(covs_chol, outputs[:, :, :, :]))
+        #
+        #     Sigma_2 = K22_noise - 1e0 * tf.einsum('msij, msjk -> msik',
+        #                                   K22,
+        #                                   tf.linalg.solve(K22_noise, K22))
+        #
+        #     print(tf.linalg.slogdet(Sigma_1))
+        #     print(tf.linalg.slogdet(Sigma_2))
+        #
+        #     Sigma_1_chol = tf.linalg.cholesky(Sigma_1)
+        #     Sigma_2_chol = tf.linalg.cholesky(Sigma_2)
+        #
+        #     normal_1 = tfd.MultivariateNormalTriL(loc=mean_1,
+        #                                           scale_tril=Sigma_1_chol)
+        #
+        #     normal_2 = tfd.MultivariateNormalTriL(loc=mean_2,
+        #                                           scale_tril=Sigma_2_chol)
+        #
+        #     print((normal_1.kl_divergence(normal_2)).shape)
 
-        # Compute KL divergence
+        return inputs, outputs[..., 0], states
 
 
 
@@ -188,7 +230,7 @@ class GPExplorationAgent(Agent):
 
     @property
     def noise(self):
-        return tf.math.exp(self._log_noise)
+        return 10 ** self._log_noise
 
 
 #    def gp_covs(self, x1, x2=none, noise=true):
