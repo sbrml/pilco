@@ -3,8 +3,9 @@ import tensorflow as tf
 import datetime
 import numpy as np
 
+from pendulum_eq_policy import PendulumEQPolicy
 from pilco.environments import Environment
-from pilco.policies import PendulumEQPolicy, TransformedPolicy
+from pilco.policies import TransformedPolicy
 from pilco.transforms import SineTransform, AbsoluteValueTransform, \
     ChainedMomentMatchingTransfom, AffineTransform
 from pilco.costs import EQCost
