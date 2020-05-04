@@ -14,13 +14,18 @@ Rename this repo. Candidates:
 - PRL
 - IRL (Inference for RL)
 
+## Priorities
+- Run on more environments: Cartpole, Mountaincar
+- Tensor shapes on all methods
+
 ## Clean up current code
+- Define documentation layout
 - Docstrings - Sphinx
 - [Doctest](https://docs.python.org/3/library/doctest.html)?
-- Define documentation layout
 - Remove all hacky stuff, like hard coded tensors
-- Clean up pendulum.py: learning-dynamics, objective, optimisation, plotting
-- Batching in calls of our agents, policies and costs.
+- Clean up pendulum.py: learning-dynamics, objective, optimisation, plotting.
+- Batching in calls of our agents, policies and costs. Start with policies.
+- Migrate to gpflow.
 - Feasible/Initialisation space - this needs more specification, included it so we don't forget.
 
 ## Example notebooks
@@ -36,6 +41,7 @@ Rename this repo. Candidates:
 
 ## Run on other environments
 - [Deepmind Control suite](https://arxiv.org/pdf/1801.00690.pdf)
+- [OpenAI gym](https://github.com/openai/gym/wiki)
 - Cartpole
 - Mountaincar
 - Double pendulum
