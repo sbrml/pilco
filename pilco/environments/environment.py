@@ -1,3 +1,4 @@
+import pilco.environments
 import gym
 
 
@@ -11,11 +12,13 @@ class Environment:
         self.env.reset()
         self.sub_sampling_factor = sub_sampling_factor
 
+
     def reset(self):
 
         self.env.reset()
 
         return self.env.state
+
 
     def step(self, action):
 

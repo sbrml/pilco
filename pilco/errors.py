@@ -4,3 +4,5 @@ class AgentError(Exception):
 class MomentMatchingError(Exception):
     pass
 
+class EnvironmentError(Exception):
+    pass
