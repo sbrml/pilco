@@ -46,7 +46,6 @@ def config():
 
     # Parameters for agent-environment loops
     optimisation_horizon = 40
-    num_optim_steps = 100
 
     num_episodes = 10
     num_steps_per_episode = 40
@@ -163,7 +162,7 @@ def experiment(num_random_episodes,
 
     eq_policy = TransformedPolicy(policy=PendulumEQPolicy(num_eq_features=num_eq_features,
                                                           dtype=dtype),
-                                  transform=SineTransform(-1.4, 1.4))
+                                  transform=SineTransform(-2.0, 2.0))
 
     eq_agent = EQGPAgent(in_state_dim=2,
                          out_state_dim=2,
