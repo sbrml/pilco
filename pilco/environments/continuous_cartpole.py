@@ -146,6 +146,8 @@ class Cartpole(gym.Env):
 
         if self.viewer is None:
 
+            from gym.envs.classic_control import rendering
+
             # Overall viewer
             self.viewer = rendering.Viewer(screen_width, screen_height)
 

@@ -13,7 +13,6 @@ import numpy as np
 import gym
 from gym import spaces
 from gym.utils import seeding
-from gym.envs.classic_control import rendering
 
 
 class Mountaincar(gym.Env):
@@ -104,6 +103,8 @@ class Mountaincar(gym.Env):
         carheight = 20
 
         if self.viewer is None:
+
+            from gym.envs.classic_control import rendering
 
             # Car constants
             clearance = 10
