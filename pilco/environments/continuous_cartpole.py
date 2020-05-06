@@ -1,7 +1,11 @@
 """
-Modification of classic cart-pole system implemented by Ian Danforth, from
+Our modification of Ian Danforth's modification:
 https://gist.github.com/iandanforth/e3ffb67cf3623153e968f2afdfb01dc8
-which was itself based on Sutton's C implementation, from
+
+of the OpenAI Gym (Discrete) Cartpole:
+https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
+
+which was itself based on Sutton's implementation:
 http://incompleteideas.net/sutton/book/code/pole.c
 """
 
@@ -15,7 +19,7 @@ from gym.envs.classic_control import rendering
 import numpy as np
 
 
-class ContinuousCartpole(gym.Env):
+class Cartpole(gym.Env):
 
     metadata = {'render.modes': ['human', 'rgb_array'],
                 'video.frames_per_second': 50}
@@ -44,20 +48,10 @@ class ContinuousCartpole(gym.Env):
         self.theta_threshold_radians = 12 * 2 * np.pi / 360
         self.x_threshold = 2.4
 
-        # Angle limit set to 2 * theta_threshold_radians so failing observation
-        # is still within bounds
-        high = np.array([self.x_threshold * 2,
-                         np.finfo(np.float32).max,
-                         self.theta_threshold_radians * 2,
-                         np.finfo(np.float32).max])
-
         # Action space is a continuous range
         self.action_space = spaces.Box(low=self.min_action,
                                        high=self.max_action,
                                        shape=(1,))
-
-        # Observation (state) space is a continuous range
-        self.observation_space = spaces.Box(-high, high)
 
         # Seed environment
         self.seed()
@@ -67,13 +61,12 @@ class ContinuousCartpole(gym.Env):
         self.state = None
         self.steps_beyond_done = None
 
-        # Hack to make this work with our state assignment
+        # Temporary hack to work with rest of library
         self.env = self
 
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
-
         return [seed]
 
 
@@ -102,7 +95,7 @@ class ContinuousCartpole(gym.Env):
         x_dot = x_dot + self.tau * xacc
         theta_dot = theta_dot + self.tau * thetaacc
 
-        return x, x_dot, theta, theta_dot
+        return np.array([x, x_dot, theta, theta_dot])
 
 
     def step(self, action):
@@ -116,17 +109,7 @@ class ContinuousCartpole(gym.Env):
         # Cast action to float to strip np trappings
         self.state = self.step_physics(self.force_mag * float(action))
 
-        # Unpack state
-        x, x_dot, theta, theta_dot = self.state
-
-        # Check if episode is done, but do not force ending
-        done = x < -self.x_threshold or                 \
-               x > self.x_threshold or                  \
-               theta < -self.theta_threshold_radians or \
-               theta > self.theta_threshold_radians
-        done = bool(done)
-
-        return np.array(self.state), None, done, {}
+        return np.array(self.state), None, False, {}
 
 
     def reset(self):
@@ -141,7 +124,6 @@ class ContinuousCartpole(gym.Env):
         return np.array(self.state)
 
     def render(self, mode='human'):
-
         """
         Render images of the environment.
 
@@ -164,6 +146,7 @@ class ContinuousCartpole(gym.Env):
 
         if self.viewer is None:
 
+            # Overall viewer
             self.viewer = rendering.Viewer(screen_width, screen_height)
 
             # Cart and pole translations
@@ -217,3 +200,4 @@ class ContinuousCartpole(gym.Env):
 
         if self.viewer:
             self.viewer.close()
+            self.viewer = None
