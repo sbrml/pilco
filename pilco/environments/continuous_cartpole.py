@@ -14,7 +14,6 @@ from pilco.errors import EnvironmentError
 import gym
 from gym import spaces, logger
 from gym.utils import seeding
-from gym.envs.classic_control import rendering
 
 import numpy as np
 
