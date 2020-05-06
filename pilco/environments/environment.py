@@ -1,5 +1,5 @@
-from continuous_cartpole import Cartpole
-from continuous_mountaincar import Mountaincar
+from .continuous_cartpole import Cartpole
+from .continuous_mountaincar import Mountaincar
 import gym
 
 
