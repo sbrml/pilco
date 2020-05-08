@@ -45,10 +45,10 @@ def config():
     num_steps_per_random_episode = 10
 
     # Parameters for agent-environment loops
-    optimisation_horizon = 40
+    optimisation_horizon = 20
 
     num_episodes = 10
-    num_steps_per_episode = 40
+    num_steps_per_episode = 20
 
     # Number of optimisation steps for dynamics GPs
     num_dynamics_optim_steps = 50
@@ -278,7 +278,7 @@ def experiment(num_random_episodes,
                                                           eq_agent.policy.policy.eq_weights,
                                                           ],
                                                       explicit=False,
-                                                      max_iterations=150)
+                                                      max_iterations=20)
 
             print(f"Policy loss: {loss},"
                   f"converged: {converged}, "
