@@ -68,9 +68,8 @@ class Mountaincar(gym.Env):
         # Unpack positiion and valocity
         position, velocity = self.state
 
-        # Increment position by
+        # Increment position by velocity
         position_ = position + velocity
-        position_ = np.clip(position_, self.min_position, self.max_position)
 
         # Increment velocity by Euler rule and clip
         velocity_ = velocity + action * self.power - 0.0025 * math.cos(3 * position)
