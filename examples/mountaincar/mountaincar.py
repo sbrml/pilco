@@ -28,7 +28,7 @@ experiment = Experiment('mountaincar-experiment')
 def config():
 
     # Lengthscale for gaussian cost
-    target_scale = [[0.1]]
+    target_scale = [[0.5]]
 
     agent_replay_buffer_limit = 240
 
