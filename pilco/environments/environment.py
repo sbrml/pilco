@@ -1,12 +1,15 @@
-from .continuous_cartpole import Cartpole
-from .continuous_mountaincar import Mountaincar
+from pilco.environments.custom.continuous_cartpole import CartPole
+from pilco.environments.custom.continuous_mountaincar import MountainCar
 import gym
+
+
+__all__ = ['Environment']
 
 
 class Environment:
 
-    custom_envs = {'Mountaincar' : Mountaincar,
-                   'Cartpole'    : Cartpole}
+    custom_envs = {'MountainCar' : MountainCar,
+                   'CartPole'    : CartPole}
 
     def __init__(self,
                  name,

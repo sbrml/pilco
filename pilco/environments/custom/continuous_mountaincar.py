@@ -6,16 +6,16 @@ which was (ultimately) based on Sutton's implementation:
 http://incompleteideas.net/sutton/MountainCar/MountainCar1.cp
 """
 
-import math
-
-import numpy as np
+from pilco.errors import EnvironmentError
 
 import gym
 from gym import spaces
 from gym.utils import seeding
 
+import numpy as np
 
-class Mountaincar(gym.Env):
+
+class MountainCar(gym.Env):
 
     metadata = {'render.modes': ['human', 'rgb_array'],
                 'video.frames_per_second': 30}
@@ -62,8 +62,8 @@ class Mountaincar(gym.Env):
 
         # Check if action is in permissible space
         if not self.action_space.contains(action):
-            EnvironmentError(f'Expected action in the range of [-1., 1.] '
-                             f'got action {action}.')
+            raise EnvironmentError(f'Expected action in the range of [-1., 1.] '
+                                   f'got action {action}.')
 
         # Unpack positiion and valocity
         position, velocity = self.state
@@ -72,7 +72,7 @@ class Mountaincar(gym.Env):
         position_ = position + velocity
 
         # Increment velocity by Euler rule and clip
-        velocity_ = velocity + action * self.power - 0.0025 * math.cos(3 * position)
+        velocity_ = velocity + action * self.power - 0.0025 * np.cos(3 * position)
         velocity_ = np.clip(velocity_, - self.max_speed, self.max_speed)
 
         self.state = np.array([position_, velocity_])
@@ -162,7 +162,7 @@ class Mountaincar(gym.Env):
         # Translate and rotate car
         self.cartrans.set_translation(scale * (self.state[0] - self.min_position),
                                       scale * self._height(self.state[0]))
-        self.cartrans.set_rotation(math.cos(3 * self.state[0]))
+        self.cartrans.set_rotation(np.cos(3 * self.state[0]))
 
         return self.viewer.render(return_rgb_array=mode=='rgb_array')
 
