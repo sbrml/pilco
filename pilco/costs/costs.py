@@ -68,7 +68,7 @@ class EQCost(Cost):
 
         if loc.shape != (1, self.target_dim):
             raise CostError(f"Location shape must be equal to (1, target_dim)"
-                            f" (Found shape {loc.shape}, {(1, self.target_dim)}")
+                            f" (Found shape {loc.shape}, {(1, self.target_dim)})")
 
         cov = tf.convert_to_tensor(cov)
         cov = tf.cast(cov, self.dtype)

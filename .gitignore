@@ -9,6 +9,10 @@ plots/*
 gifs/*
 examples/pendulum/gifs
 examples/pendulum/plots
+examples/mountaincar/gifs
+examples/mountaincar/plots
+examples/mountaincar/gifs_2
+examples/mountaincar/plots_2
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
